@@ -2,7 +2,7 @@
 
 Real import of ``app.mcp_server``; asserts the two FastMCP instances register
 exactly the intended tool sets with no overlap. Run:
-    D:/Software/Dev/Miniforge/python.exe tests/verify_mcp_split_test.py
+    python tests/verify_mcp_split_test.py
 """
 import sys, asyncio
 from pathlib import Path
