@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Project runtime data (private; recreated on first launch)
+data/agent.db
+data/agent.db-*
+data/agent.db.bak-*
+data/backups/
+data/snapshots_phase6_7/
+*.db-wal
+*.db-shm
+
+# Distribution artifacts (regenerate with build_zip.py)
+*.zip
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Windows reserved device name "nul" appears as a phantom entry in this dir
+# (like /dev/null); it is NOT a real file and git cannot index it — exclude it.
+nul

@@ -1,0 +1,37 @@
+# DeepSeek Harness — MCP server configuration (Phase 8.5: core + governance split)
+#
+# Two instances share the same SQLite database and the same app.* backend, but
+# are launched as SEPARATE MCP servers. Mount only `bionic-agent` for daily
+# use (21 lightweight core tools); attach `bionic-agent-governance` only
+# when you need the memory-governance / lifecycle tools (33 tools). Mounting the
+# governance instance on demand cuts the per-session fixed tool-list token cost
+# from 54 (all at once) to 21 (core only).
+#
+# IMPORTANT: use the `-m` entry point (NOT a direct script path). A direct
+# `args: [.../app/mcp_server_gov.py]` would set sys.path[0] to the app/ dir and
+# break `from app import ...`. The `-m` form is handled automatically.
+# Replace the paths with real absolute paths on your machine.
+
+# --- Core instance (Phase 1-4 legacy tools, 21) — mount this by default ---
+- id: bionic-agent
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: bionic-agent
+    transport: stdio
+    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    args:
+      - '-m'
+      - 'app.mcp_server'
+    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'
+
+# --- Governance instance (Phase 5/6/7/8 tools, 33) — attach on demand ---
+- id: bionic-agent-governance
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: bionic-agent-governance
+    transport: stdio
+    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    args:
+      - '-m'
+      - 'app.mcp_server_gov'
+    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'

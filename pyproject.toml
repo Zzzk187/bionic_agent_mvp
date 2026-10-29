@@ -1,0 +1,26 @@
+[project]
+name = "bionic-agent-mcp"
+version = "0.1.0"
+description = "Local semantic memory + multi-stage tasks + governance as an MCP server (zero external API)."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.30.0,<2.0.0",
+    "fastembed>=0.7.3,<1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["py.typed"]
+
+[project.scripts]
+bionic-agent = "app.mcp_server:_run_cli"
+bionic-agent-governance = "app.mcp_server_gov:_run_cli"
+
+[tool.setuptools.exclude-package-data]
+app = ["__pycache__", "*.pyc"]
