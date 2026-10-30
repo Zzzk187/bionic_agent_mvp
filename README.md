@@ -121,8 +121,8 @@ bionic-agent-admin
 「记忆/任务」图标，**点开后整块是 iframe 承载上面的 8899 面板**——不改 asar、不碰
 宿主源码、下次 DSH 更新自动失效也不影响其他功能。
 
-1. 先让 8899 面板跑起来（见上文 `bionic-agent-admin`）。
-2. 把插件链接进 desktop profile 并登记到 bundles：
+1. 把插件链接进 desktop profile 并登记到 bundles（**不需要**先手动跑 `bionic-agent-admin`，
+   插件的宿主半会在 DSH 启动时自己拉起 8899 服务）：
    ```bash
    # 用管理员/有权限的终端（需改写 profile 的 package.json，会触发 DSH 重启）
    python dsh-panel-client/install.py
@@ -131,11 +131,17 @@ bionic-agent-admin
    建**符号链接**指向本仓库的 `dsh-panel-client/`；② 把
    `"@local/bionic-agent-panel"` 加进 `package.json` 的 `dependencies` 与 `dsh.profile.bundles`。
    插件自带的 `cordis.patch.yml` 会被宿主**自动层叠**，无需手工改 profile 的 patch。
-3. **完全退出并重启 DeepSeek Harness**（含托盘）。重启后侧边栏出现「记忆/任务」图标，
+2. **完全退出并重启 DeepSeek Harness**（含托盘）。重启后侧边栏出现「记忆/任务」图标，
    点开即是管理面板。
 
-> 这种形态依赖 8899 服务常驻。若不常开面板，用纯浏览器开 `http://127.0.0.1:8899`
-> 同样可用，且零安装。要卸载：`python dsh-panel-client/install.py --uninstall`。
+> **服务生命周期**：插件宿主半（`lib/index.js`）在 `apply()` 里先探测 8899 端口——
+> 已有服务就直接复用（绝不 kill 用户自己起的那个），没有才 `spawn` 一个
+> `python -m app.admin_ui --port 8899`，日志写到 `data/admin_ui.log`；DSH 退出时
+> 只回收它自己起的进程。Python 解释器按 `.venv` → miniforge → anaconda → 系统 python
+> 的顺序自动探测，也可在 `cordis.patch.yml` 的 `config.pythonPath` 里指定。
+> 这种形态下不再需要手动常驻 `bionic-agent-admin`。若不想装插件，用纯浏览器开
+> `http://127.0.0.1:8899` 同样可用，且零安装。要卸载：
+> `python dsh-panel-client/install.py --uninstall`。
 
 ---
 
