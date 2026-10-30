@@ -86,10 +86,10 @@ def install():
         json.dump(pkg, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
-    print("\n[ok] plugin registered. Now:")
-    print("   1. make sure the FastAPI panel is running (bionic-agent-admin, port 8899)")
-    print("   2. FULLY quit DeepSeek Harness (tray icon too), then restart it")
-    print("   3. sidebar should show a '记忆/任务' entry -> opens the panel")
+    print("\n[ok] plugin registered. Now just:")
+    print("   FULLY quit DeepSeek Harness (tray icon too), then restart it.")
+    print("   The sidebar shows a '记忆/任务' entry; the host half starts the")
+    print("   FastAPI panel by itself — no manual `bionic-agent-admin` needed.")
 
 
 def uninstall():

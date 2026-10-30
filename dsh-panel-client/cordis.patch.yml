@@ -6,5 +6,10 @@
     - id: bionic-agent-panel
       name: '@local/bionic-agent-panel'
       config:
-        # 面板承载的 FastAPI 管理界面地址；服务须先起来（bionic-agent-admin）。
+        # 面板承载的管理界面地址。宿主半（lib/index.js）会自动在 8899 起
+        # FastAPI 服务，client.js 的 iframe 也指向这里。改端口就改这一行。
         adminUrl: 'http://127.0.0.1:8899'
+        # 插件加载时自动拉起管理服务；设为 false 则需自己跑 bionic-agent-admin。
+        autoStart: true
+        # 可选：指定 python 解释器。留空则自动探测（.venv → Miniforge → PATH）。
+        pythonPath: ''

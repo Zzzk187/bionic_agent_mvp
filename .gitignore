@@ -13,6 +13,7 @@ data/agent.db-*
 data/agent.db.bak-*
 data/backups/
 data/snapshots_phase6_7/
+data/admin_ui.log
 *.db-wal
 *.db-shm
 
