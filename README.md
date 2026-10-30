@@ -209,9 +209,19 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 想在面板页里改用别的地址，改 `cordis.patch.yml` 的 `adminUrl` 即可，前端不用动；
 把 `mountPath` 设为 `''` 可关掉反代、退回纯跨源。
 
-> 自检覆盖了这条链路：`node dsh-panel-client/test/all.mjs` 里的「同源反代挂载」
-> 会用假 `webServer` 真起一个管理服务，逐条验证页面、API、查询串透传、上游断开
-> 的 502、以及 dispose 后路由被摘除。
+> 自检覆盖了这条链路，分两层：
+>
+> - 「同源反代挂载」（`test/proxy-mount.mjs`）用手写假 `webServer`，快速验证页面、
+>   API、查询串透传、上游断开的 502、写方法 fence（401/403）、以及 dispose 后路由
+>   被摘除。
+> - 「真宿主 WebServer 反代」（`test/host-webserver.mjs`）把 DSH 安装目录里真的
+>   `@deepseek-ai/dsh-host-webserver` 装进一个真 cordis `Context`，走完全真实的
+>   `ctx.inject(["webServer"], ...)` 路径。这一层是必要的：假 `webServer` 复刻了
+>   `register()` 的契约，但证明不了「服务就绪时才回调」这条路径通不通——它不通时
+>   插件会安静地什么都不挂，而假 webServer 的用例永远是绿的。
+>
+> 两条都需要宿主源码（默认 `C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai`，
+> 可用 `DEPS_DIR` 覆盖），拿不到时 SKIP 而不是 FAIL。
 
 ---
 
