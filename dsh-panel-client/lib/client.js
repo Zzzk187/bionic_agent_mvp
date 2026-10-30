@@ -9,6 +9,15 @@ window.__ModuleLoader__.load({
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+		// 浏览器侧的自证标记：模块一被求值就写，早于任何可能抛错的逻辑。
+		// 宿主若因版本/声明不匹配静默跳过插件，这段代码根本不会执行，
+		// 于是「有标记=client 半已加载」「无标记=根本没被求值」，可区分。
+		try {
+			window.__bionicPanelLoaded = (window.__bionicPanelLoaded || 0) + 1;
+			if (document.documentElement) {
+				document.documentElement.setAttribute("data-bionic-panel", "loaded");
+			}
+		} catch (_) { /* 标记失败不影响主流程 */ }
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 

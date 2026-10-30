@@ -103,6 +103,12 @@ function check(name, ok, detail = "") {
 	console.log(`[${mark}] ${name}${detail ? " — " + detail : ""}`);
 }
 
+// 不算失败、只提示的检查（比如"DSH 还没重启"这种必然状态）。
+function pending(name, detail = "") {
+	results.push({ name, ok: true, pending: true });
+	console.log(`[WAIT] ${name}${detail ? " — " + detail : ""}`);
+}
+
 // ── 1. 找到 desktop profile ───────────────────────────────────────────
 const DSH_HOME = process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".dsh");
 const profileName = process.env.DSH_PROFILE ?? "desktop";
@@ -209,7 +215,24 @@ if (listening) {
 	}
 }
 
-// ── 8. 宿主半的日志（启动失败时最直接的证据）─────────────────────────
+// ── 8. 宿主半的启动痕迹（判断「插件到底加载没加载」的唯一直接证据）──────
+// panel-boot.log 由 lib/index.js 的 bootTrace() 写：apply() 一被调用就落一行。
+// 有这行 = 宿主真的把这插件的 Node 半执行了；没有 = 根本没加载（被静默跳过）。
+//
+// 这一项在"还没重启 DSH"时必然为空，属于预期状态而非缺陷 —— 所以用 pending
+// 而不是 fail，避免把"你还没重启"报成"插件坏了"。
+const bootLog = resolve(PKG_DIR, "..", "data", "panel-boot.log");
+if (existsSync(bootLog)) {
+	const lines = readFileSync(bootLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	check("宿主半加载过（data/panel-boot.log 有痕迹）", lines.length > 0, `${lines.length} 行`);
+	console.log("  最近几行：");
+	for (const line of lines.slice(-6)) console.log("    " + line);
+} else {
+	pending("宿主半加载过（data/panel-boot.log 有痕迹）",
+		"还没有痕迹：若你尚未重启 DSH 属正常；重启后仍为空，说明插件被宿主静默跳过（多半是 dsh.engines.dsh 不满足）");
+}
+
+// ── 9. 宿主半的日志（启动失败时最直接的证据）─────────────────────────
 const logPath = resolve(PKG_DIR, "..", "data", "admin_ui.log");
 if (existsSync(logPath)) {
 	const size = statSync(logPath).size;
@@ -223,9 +246,12 @@ if (existsSync(logPath)) {
 
 // ── 汇总 ────────────────────────────────────────────────────────────
 const failed = results.filter((r) => !r.ok);
-console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
+const waiting = results.filter((r) => r.pending);
+console.log(`\n${results.length - failed.length - waiting.length}/${results.length - waiting.length} 项通过` +
+	(waiting.length ? `（另有 ${waiting.length} 项待重启后确认）` : ""));
 if (failed.length) {
 	console.log("失败项：" + failed.map((r) => r.name).join("、"));
 	process.exit(1);
 }
+console.log("静态接线全部正确。若侧边栏仍无图标，问题在浏览器端：看 DSH 窗口的 DevTools Console。");
 console.log("静态接线全部正确。若侧边栏仍无图标，问题在浏览器端：看 DSH 窗口的 DevTools Console。");

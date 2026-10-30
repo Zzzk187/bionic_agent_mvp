@@ -11,7 +11,7 @@
 // （可能是用户自己起的、或另一个 DSH 实例起的），避免互相踩。
 import { spawn } from "node:child_process";
 import { connect } from "node:net";
-import { openSync, closeSync, mkdirSync, existsSync } from "node:fs";
+import { openSync, closeSync, mkdirSync, existsSync, appendFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -174,28 +174,39 @@ export function apply(ctx, config = {}) {
 	let launched = null;
 	let disposed = false;
 
+	// 落一份可读的启动痕迹：ctx.logger 只进宿主终端，重启后想确认
+	// "插件到底加载没加载" 时看不到。这份文件由 verify-install.mjs 读。
+	bootTrace(ctx, "apply 被调用（host 半已加载）");
+
 	ctx.effect(() => {
-		if (merged.autoStart === false) return () => {};
+		if (merged.autoStart === false) {
+			bootTrace(ctx, "autoStart=false，不拉起管理服务");
+			return () => {};
+		}
 		const projectDir = resolve(String(merged.projectDir ?? DEFAULTS.projectDir));
 
 		void (async () => {
 			// 已有实例在跑 → 复用（可能是用户自己起的）。
 			if (await isListening(port)) {
 				ctx.logger?.info?.(`[bionic-panel] ${adminUrl} 已在运行，复用现有服务`);
+				bootTrace(ctx, `复用已有服务 ${adminUrl}`);
 				return;
 			}
 			launched = launchAdmin(merged, projectDir, port);
 			if (launched.error !== undefined) {
 				ctx.logger?.warn?.(`[bionic-panel] 启动管理服务失败：${launched.error?.message ?? launched.error}`);
+				bootTrace(ctx, `启动失败：${launched.error?.message ?? launched.error}`);
 				return;
 			}
 			const up = await waitUntilListening(port, merged.startTimeoutMs);
 			if (up) {
 				ctx.logger?.info?.(`[bionic-panel] 管理服务已就绪：${adminUrl}`);
+				bootTrace(ctx, `管理服务已就绪 ${adminUrl}（${pythonHint(launched)}）`);
 			} else if (!disposed) {
 				ctx.logger?.warn?.(
 					`[bionic-panel] 管理服务未能就绪（${pythonHint(launched)}），面板会显示空白；日志见 ${launched.logPath ?? "data/admin_ui.log"}`
 				);
+				bootTrace(ctx, `管理服务未能就绪（${pythonHint(launched)}），见 ${launched.logPath ?? "data/admin_ui.log"}`);
 			}
 		})();
 
@@ -204,6 +215,7 @@ export function apply(ctx, config = {}) {
 			// 只收自己起的；别人起的实例不碰。
 			launched?.kill();
 			launched = null;
+			bootTrace(ctx, "插件已卸载（dispose），自己起的服务已收");
 		};
 	}, "bionic-panel: admin service lifecycle");
 
@@ -212,6 +224,26 @@ export function apply(ctx, config = {}) {
 		launched?.kill();
 		launched = null;
 	};
+}
+
+/**
+ * 把启动痕迹追加到 <projectDir>/data/panel-boot.log。
+ * 写盘失败绝不影响插件运行（吞掉异常）。
+ *
+ * 测试夹具会设 BIONIC_PANEL_NO_TRACE=1 跳过落盘 —— 否则 test/ 里跑的假宿主
+ * 也会往这份日志里写，重启后就没法用「有没有痕迹」判断 DSH 到底加载没加载了。
+ */
+function bootTrace(ctx, message) {
+	try {
+		ctx.logger?.info?.(`[bionic-panel] ${message}`);
+		if (process.env.BIONIC_PANEL_NO_TRACE === "1") return;
+		const line = `${new Date().toISOString()} pid=${process.pid} ${message}\n`;
+		const dir = resolve(String(DEFAULTS.projectDir), "data");
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		appendFileSync(resolve(dir, "panel-boot.log"), line, "utf8");
+	} catch {
+		/* 痕迹写不了也不影响主流程 */
+	}
 }
 
 function pythonHint(launched) {

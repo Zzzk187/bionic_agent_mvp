@@ -4,6 +4,11 @@
 // 这跑在真 Cordis 上（不是 mock），等价于 DSH 启动时的加载路径。
 //
 // cordis 是 DSH 安装目录里的包，项目自己不带依赖，所以用绝对路径 import。
+
+// 这是假宿主，不能往 data/panel-boot.log 里写痕迹 —— 那份日志是用来判断
+// 「真 DSH 到底加载没加载插件」的，测试污染了就失去意义。
+process.env.BIONIC_PANEL_NO_TRACE = "1";
+
 const CORDIS_ENTRY =
 	process.env.DSH_CORDIS ??
 	"C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai/cordis/lib/index.js";
