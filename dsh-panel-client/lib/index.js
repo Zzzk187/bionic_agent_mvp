@@ -27,7 +27,14 @@ const DEFAULT_PROJECT_DIR = dirname(PKG_DIR);
 
 /** 默认配置。cordis.patch.yml 的 config 段会覆盖这里的值。 */
 const DEFAULTS = {
-	/** 管理界面地址，client.js 的 iframe 也读同一个值。 */
+	/**
+	 * 管理服务地址。宿主半用它探活、拉起、反代。
+	 *
+	 * 注意 client 半拿不到 config（dsh-client-modules 只按 id 加载），所以它那边
+	 * 只能「优先走 mountPath 同源、失败退回 http://127.0.0.1:8899」。也就是说：
+	 * 改这里到别的端口后，反代会跟着变（iframe 不受影响），但浏览器半的跨源
+	 * 退路仍指向 8899 —— 只要 mountPath 没关，这不是问题。
+	 */
 	adminUrl: "http://127.0.0.1:8899",
 	/** 监听端口，由 adminUrl 推导，一般不用手填。 */
 	port: 8899,
