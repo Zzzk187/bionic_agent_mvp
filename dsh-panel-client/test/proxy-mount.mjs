@@ -43,8 +43,32 @@ function get(pathname, port) {
 	});
 }
 
-function listening(port) {
+function send(method, pathname, port, body) {
 	return new Promise((done) => {
+		const payload = body === undefined ? undefined : Buffer.from(body, "utf8");
+		const req = http.request(
+			{
+				host: "127.0.0.1",
+				port,
+				path: pathname,
+				method,
+				headers: payload
+					? { "content-type": "application/json", "content-length": payload.length }
+					: undefined
+			},
+			(res) => {
+				const chunks = [];
+				res.on("data", (c) => chunks.push(c));
+				res.on("end", () => done({ status: res.statusCode, body: Buffer.concat(chunks) }));
+			}
+		);
+		req.on("error", (e) => done({ status: 0, body: Buffer.from(String(e.message)) }));
+		if (payload) req.write(payload);
+		req.end();
+	});
+}
+
+function listening(port) {	return new Promise((done) => {
 		const req = http.get({ host: "127.0.0.1", port, path: "/" }, (res) => {
 			res.resume();
 			done(true);
@@ -120,6 +144,11 @@ const ctx = {
 		ctx.__injected = names;
 		// 关键：webServer 在这个上下文里存在 → 应该走挂载分支
 		return cb(ctx);
+	},
+	// 假 connection：默认放行一切，个别用例里改成返回 401/403 来测写保护。
+	__connection: { requestRejection() { return undefined; } },
+	get(name) {
+		return name === "connection" ? ctx.__connection : undefined;
 	}
 };
 
@@ -153,6 +182,47 @@ clock: {
 	} catch {}
 	const rows = parsed?.data?.memories ?? parsed?.data?.results ?? parsed?.data;
 	check("查询串透传（?limit=2）", withQuery.status === 200 && (Array.isArray(rows) ? rows.length <= 2 : parsed?.ok === true), `status=${withQuery.status}`);
+}
+
+// ---- 写方法走宿主的 Host/Origin fence（防跨站写入）----
+{
+	// 1) fence 拒绝时：写方法必须被拦下，且不转发到管理服务
+	ctx.__connection = { requestRejection: () => 401 };
+	const blockedPost = await send("POST", "/bionic-panel/api/memories", dshPort, '{"content":"不该被写入"}');
+	let blockedJson = null;
+	try {
+		blockedJson = JSON.parse(blockedPost.body.toString());
+	} catch {}
+	check(
+		"未登录时写方法被拦（401）",
+		blockedPost.status === 401 && blockedJson?.ok === false,
+		`status=${blockedPost.status} msg=${blockedJson?.message ?? ""}`
+	);
+
+	// 2) 只 fence 写方法：同一时刻 GET 必须照常通过（否则面板读不到东西）
+	const stillReads = await get("/bionic-panel/api/stats", dshPort);
+	check("fence 拒绝期间 GET 仍可用", stillReads.status === 200, `status=${stillReads.status}`);
+
+	// 3) fence 抛错时不能让面析变砖 —— 安全组件故障不该阻断本地面板
+	ctx.__connection = {
+		requestRejection() {
+			throw new Error("connection 服务未就绪");
+		}
+	};
+	const survived = await get("/bionic-panel/api/stats", dshPort);
+	check("fence 抛错时请求仍放行", survived.status === 200, `status=${survived.status}`);
+
+	// 4) 放行时写方法要真的到达上游
+	ctx.__connection = { requestRejection: () => undefined };
+	const allowed = await send("POST", "/bionic-panel/api/memories", dshPort, '{"content":"反代写入链路自检","category":"test"}');
+	check("放行时写方法到达上游", allowed.status >= 200 && allowed.status < 300, `status=${allowed.status}`);
+	if (allowed.status >= 200 && allowed.status < 300) {
+		try {
+			const created = JSON.parse(allowed.body.toString());
+			const id = created?.data?.memory?.id ?? created?.data?.id;
+			if (id !== undefined) await send("DELETE", `/bionic-panel/api/memories/${id}`, dshPort);
+		} catch {}
+	}
 }
 
 // 面板页在同源下必须知道自己的基路径，否则它的 /api/... 会打到 DSH 上

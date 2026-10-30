@@ -299,7 +299,49 @@ function mountProxy(ctx, mountPath, adminUrl) {
 	const base = new URL(adminUrl);
 	const origin = base.origin;
 
+	// 同源反代让面板和 DSH 共用一个源，也就意味着**任何能打到 DSH 端口的网页**
+	// 都能对我们的写接口发请求（读响应被同源策略挡住，但 POST/DELETE 会被执行）。
+	// 记忆库的删除/归档是不可逆的，所以写方法一律走宿主自己的 Host/Origin fence。
+	//
+	// 只 fence 写方法而不是全部：GET 没有跨站后果（响应读不到），而把 GET 也
+	// 卡在 cookie 判定上，会在 authority 变化的边缘情况下把能用的面板判死。
+	// fence 自身抛错不拦请求 —— 安全组件故障不该让本地面板不可用。
+	const guardWrite = (req, res) => {
+		const method = String(req.method ?? "GET").toUpperCase();
+		if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
+		let connection;
+		try {
+			connection = ctx.get?.("connection");
+		} catch {
+			return true;
+		}
+		if (connection?.requestRejection === undefined) return true;
+		let rejection;
+		try {
+			rejection = connection.requestRejection(req);
+		} catch {
+			return true;
+		}
+		if (rejection === undefined) return true;
+		res.writeHead(rejection, {
+			"content-type": "application/json; charset=utf-8",
+			"cache-control": "no-store"
+		});
+		res.end(
+			JSON.stringify({
+				ok: false,
+				message:
+					rejection === 403
+						? "请求被拒绝：来源不是 DSH 页面（防跨站写入）"
+						: "未登录 DSH，不能写管理面板（请从 DSH 窗口里操作）",
+				hint: "面板读操作不受影响；写操作需从 DSH 自己的窗口发起"
+			})
+		);
+		return false;
+	};
+
 	const handler = (req, res) => {
+		if (!guardWrite(req, res)) return;
 		const incoming = new URL(req.url ?? "/", "http://dsh.internal");
 		let rest = incoming.pathname.slice(prefix.length);
 		if (rest === "" || rest === "/") rest = "/";

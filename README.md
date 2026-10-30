@@ -195,6 +195,17 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
   （`base` 让面板页把自身的 `/api/...` 补上前缀）；同源探不通再退回跨源
   `http://127.0.0.1:8899`。**iframe 一律渲染**，探测失败只叠加一条说明条。
 
+**写操作要过 DSH 的 Host/Origin fence。** 同源意味着任何能打到 DSH 端口的网页
+都能对我们的写接口发请求（读响应被同源策略挡住，但 `POST`/`DELETE` 会被执行），
+而记忆库的删除/归档不可逆。所以反代对**非 GET/HEAD/OPTIONS** 请求先调
+`ctx.connection.requestRejection(req)`：被拒就返回 401/403 JSON，不转发上游。
+只拦写方法是有意的——GET 没有跨站后果，把它也卡在 cookie 上反而会在 authority
+变化的边缘情况把能用的面板判死；fence 自身抛错时也放行，安全组件故障不该让本地
+面板变砖。
+
+> 副作用：直接用 `curl` 往 `/bionic-panel/api/...` 发写请求会被拦（没有 DSH 的
+> cookie）。面板自己在 iframe 里跑是同源的，会自动带 cookie，不受影响。
+
 想在面板页里改用别的地址，改 `cordis.patch.yml` 的 `adminUrl` 即可，前端不用动；
 把 `mountPath` 设为 `''` 可关掉反代、退回纯跨源。
 
