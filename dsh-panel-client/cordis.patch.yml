@@ -1,0 +1,10 @@
+# bionic-agent-panel bundle patch —— 把面板插件挂进 DSH 配置树。
+# 安装脚本会把它加进 desktop profile 的 dsh.profile.bundles，
+# DSH 启动时会自动把本文件层叠进配置树（无需手工改 profile 的 cordis.patch.yml）。
+# 这一行绝不能写行尾注释：DSH 商城预检用正则抓 id 值，行尾注释会让它抓不到 entry ID。
+- insert:
+    - id: bionic-agent-panel
+      name: '@local/bionic-agent-panel'
+      config:
+        # 面板承载的 FastAPI 管理界面地址；服务须先起来（bionic-agent-admin）。
+        adminUrl: 'http://127.0.0.1:8899'

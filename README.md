@@ -113,7 +113,29 @@ bionic-agent-admin
 数据库，因此**和 MCP 工具完全等价、实时同步**——在面板里改的记忆，MCP 工具立刻能读到。
 
 > 设计取舍：面板是**独立进程**（FastAPI），不侵入 DeepSeek Harness 的 Electron/asar，
-> 因此宿主更新、热重载都不会影响它；想嵌进 DSH 界面则需另写 Cordis client 插件（成本更高）。
+> 因此宿主更新、热重载都不会影响它。
+
+### 可选：把面板嵌进 DeepSeek Harness（侧边栏）
+
+仓库自带一个 Cordis client 插件 `dsh-panel-client/`，它只在 DSH 侧边栏加一个
+「记忆/任务」图标，**点开后整块是 iframe 承载上面的 8899 面板**——不改 asar、不碰
+宿主源码、下次 DSH 更新自动失效也不影响其他功能。
+
+1. 先让 8899 面板跑起来（见上文 `bionic-agent-admin`）。
+2. 把插件链接进 desktop profile 并登记到 bundles：
+   ```bash
+   # 用管理员/有权限的终端（需改写 profile 的 package.json，会触发 DSH 重启）
+   python dsh-panel-client/install.py
+   ```
+   脚本做的事：① 在 desktop profile 的 `node_modules/@local/bionic-agent-panel`
+   建**符号链接**指向本仓库的 `dsh-panel-client/`；② 把
+   `"@local/bionic-agent-panel"` 加进 `package.json` 的 `dependencies` 与 `dsh.profile.bundles`。
+   插件自带的 `cordis.patch.yml` 会被宿主**自动层叠**，无需手工改 profile 的 patch。
+3. **完全退出并重启 DeepSeek Harness**（含托盘）。重启后侧边栏出现「记忆/任务」图标，
+   点开即是管理面板。
+
+> 这种形态依赖 8899 服务常驻。若不常开面板，用纯浏览器开 `http://127.0.0.1:8899`
+> 同样可用，且零安装。要卸载：`python dsh-panel-client/install.py --uninstall`。
 
 ---
 
