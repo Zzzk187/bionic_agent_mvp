@@ -7,9 +7,14 @@
       name: '@local/bionic-agent-panel'
       config:
         # 面板承载的管理界面地址。宿主半（lib/index.js）会自动在 8899 起
-        # FastAPI 服务，client.js 的 iframe 也指向这里。改端口就改这一行。
+        # FastAPI 服务。改端口就改这一行 —— 前端不必跟着改：iframe 走的是
+        # 下面的 mountPath 同源反代，地址由宿主半在运行时决定。
         adminUrl: 'http://127.0.0.1:8899'
         # 插件加载时自动拉起管理服务；设为 false 则需自己跑 bionic-agent-admin。
         autoStart: true
         # 可选：指定 python 解释器。留空则自动探测（.venv → Miniforge → PATH）。
         pythonPath: ''
+        # 把面板挂到 DSH 自己服务器上的同源前缀（默认 /bionic-panel）。
+        # 好处：iframe 与 XHR 都不跨源，不受浏览器策略影响，也不怕端口错位。
+        # 设为 '' 可关掉，退化成直接跨源打开 http://127.0.0.1:8899。
+        mountPath: '/bionic-panel'

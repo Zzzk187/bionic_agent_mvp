@@ -164,11 +164,43 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
   证明浏览器侧真的渲染了。脚本探测和直接打开 8899 都不算，只认宿主 iframe
   （`referer` 带 DSH 端口的那种）。
 - 两份日志都会写进项目 `data/` 目录，已在 `.gitignore` 里。
+- **跑完自检若这两项显示 `[PASS]`，但你还没重启过 DSH，那是假信号**——多半是有人
+  手动起了服务或用脚本代理过。先删掉 `data/panel-boot.log`、`data/panel-client.log`
+  再跑一次，两项应回到 `[WAIT]`。
 
 > 一个容易忽略的坑：面板服务在 8899，宿主页面在随机端口，**这是跨源**。如果
 > 管理服务没给 CORS 头，跨源 `fetch` 会被浏览器拦掉——服务明明正常，探测也会
 > 判成"没响应"。`app/admin_ui.py` 用 `CORSMiddleware` 限死本机来源
 > （`127.0.0.1`/`localhost`/`[::1]` 任意端口）来解决，不放开 `*`。
+
+#### 为什么面板走同源反代，而不是直连 8899
+
+插件默认把面板挂到 **DSH 自己服务器的 `/bionic-panel` 前缀**上（`ctx.webServer`
+反代到 8899），iframe 打开的是同源的 `/bionic-panel/`。这不是绕远路，是因为跨源
+方案要同时赌三件事，任何一件不成立都表现为「白屏 / 空列表 / 网络错误」，而报错
+只出现在用户浏览器的 console 里：
+
+1. 浏览器允许 iframe 嵌入 8899（`X-Frame-Options` / `frame-ancestors`）；
+2. 浏览器允许页面跨源 XHR 到 8899（CORS 头对不对）；
+3. `client.js` 里硬编码的端口与 `cordis.patch.yml` 里的 `adminUrl` 一致
+   （client 半拿不到 config，只能硬编码）。
+
+同源反代把这三条都变成不变量，顺带解决了第 3 条。实现分两层：
+
+- 宿主半 `lib/index.js`：`ctx.inject(["webServer"], …)` 注册 `{kind:"prefix",
+  path:"/bionic-panel"}`，逐请求反代到 `adminUrl`；上游不可达时返回**可读的 502**
+  （带 `message` 与排查提示），而不是挂住。`webServer` 不存在（非 Web 宿主）或
+  注册冲突时只降级、不报错。
+- 浏览器半 `lib/client.js`：iframe 先走 `/bionic-panel/?base=%2Fbionic-panel`
+  （`base` 让面板页把自身的 `/api/...` 补上前缀）；同源探不通再退回跨源
+  `http://127.0.0.1:8899`。**iframe 一律渲染**，探测失败只叠加一条说明条。
+
+想在面板页里改用别的地址，改 `cordis.patch.yml` 的 `adminUrl` 即可，前端不用动；
+把 `mountPath` 设为 `''` 可关掉反代、退回纯跨源。
+
+> 自检覆盖了这条链路：`node dsh-panel-client/test/all.mjs` 里的「同源反代挂载」
+> 会用假 `webServer` 真起一个管理服务，逐条验证页面、API、查询串透传、上游断开
+> 的 502、以及 dispose 后路由被摘除。
 
 ---
 

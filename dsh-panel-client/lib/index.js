@@ -11,6 +11,7 @@
 // （可能是用户自己起的、或另一个 DSH 实例起的），避免互相踩。
 import { spawn } from "node:child_process";
 import { connect } from "node:net";
+import { request as httpRequest } from "node:http";
 import { openSync, closeSync, mkdirSync, existsSync, appendFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +38,15 @@ const DEFAULTS = {
 	/** bionic_agent_mvp 项目根目录（含 app/ 与 data/）。 */
 	projectDir: DEFAULT_PROJECT_DIR,
 	/** 服务启动后最多等多久（毫秒）。 */
-	startTimeoutMs: 20000
+	startTimeoutMs: 20000,
+	/**
+	 * 挂到 DSH 自身服务器上的同源前缀，空串 = 不挂。
+	 *
+	 * 为什么要这一层：iframe 跨源（DSH 在 A 端口、面板在 8899）能显示，但要求
+	 * 浏览器既不拦 iframe 也不拦 XHR。挂成同源后两者都不依赖浏览器策略，
+	 * 也顺带消灭了「client 半硬编码 8899 / host 半可配 adminUrl」的错位。
+	 */
+	mountPath: "/bionic-panel"
 };
 
 /** adminUrl → 端口。用于把配置归一成一处的真值。 */
@@ -178,6 +187,24 @@ export function apply(ctx, config = {}) {
 	// "插件到底加载没加载" 时看不到。这份文件由 verify-install.mjs 读。
 	bootTrace(ctx, "apply 被调用（host 半已加载）");
 
+	// 同源挂载：插件先挂路由，再拉服务。顺序有意如此 —— 路由是同步注册的，
+	// 服务要几秒才起来；反过来会让「刚重启就点开面板」的第一屏打到没起来的端口。
+	//
+	// 用 ctx.inject 而不是把 "webServer" 写进导出的 inject：非 Web 宿主（纯 CLI）
+	// 没有 webServer 时，写进 inject 会让整个插件永远不加载；用它只让挂载这一块
+	// 缺席，服务拉起的逻辑照常跑。
+	const proxyMountPath = String(merged.mountPath ?? "").trim();
+	let disposeProxy = null;
+	if (proxyMountPath !== "") {
+		ctx.inject(["webServer"], (inner) => {
+			disposeProxy = mountProxy(inner, proxyMountPath, adminUrl) ?? null;
+			return () => {
+				disposeProxy?.();
+				disposeProxy = null;
+			};
+		});
+	}
+
 	ctx.effect(() => {
 		if (merged.autoStart === false) {
 			bootTrace(ctx, "autoStart=false，不拉起管理服务");
@@ -223,6 +250,8 @@ export function apply(ctx, config = {}) {
 		disposed = true;
 		launched?.kill();
 		launched = null;
+		disposeProxy?.();
+		disposeProxy = null;
 	};
 }
 
@@ -248,4 +277,79 @@ function bootTrace(ctx, message) {
 
 function pythonHint(launched) {
 	return launched?.python ? `python=${launched.python}` : "python 路径未解析";
+}
+
+/**
+ * 在 DSH 自己的服务器上开一个前缀路由，把请求反向代理给本地管理服务。
+ *
+ * 为什么不是「让面板直接跨源调 8899」：跨源要同时赌三件事——浏览器不拦
+ * iframe、不拦 XHR、CORS 配置对。任何一件不成立，面板就是白屏或空列表，
+ * 而报错还只出现在用户浏览器的 console 里。挂成同源后这些都变成不变量。
+ *
+ * 返回 disposer；webServer 缺失（非 Web 宿主）时返回 undefined，不报错。
+ */
+function mountProxy(ctx, mountPath, adminUrl) {
+	const prefix = String(mountPath ?? "").replace(/\/+$/, "");
+	if (!prefix.startsWith("/")) return undefined;
+	const webServer = ctx.webServer;
+	if (webServer?.register === undefined) {
+		bootTrace(ctx, `宿主没有 webServer，跳过同源挂载 ${prefix}（面板仍可用跨源地址打开）`);
+		return undefined;
+	}
+	const base = new URL(adminUrl);
+	const origin = base.origin;
+
+	const handler = (req, res) => {
+		const incoming = new URL(req.url ?? "/", "http://dsh.internal");
+		let rest = incoming.pathname.slice(prefix.length);
+		if (rest === "" || rest === "/") rest = "/";
+		if (!rest.startsWith("/")) rest = `/${rest}`;
+		const target = new URL(rest + incoming.search, origin);
+
+		// 逐跳头不能透传；Host 必须换成目标源的，否则 uvicorn 侧校验会不认。
+		const headers = { ...req.headers, host: base.host };
+		delete headers["accept-encoding"];
+
+		const upstream = httpRequest(
+			{
+				protocol: target.protocol,
+				hostname: target.hostname,
+				port: target.port || (target.protocol === "https:" ? 443 : 80),
+				path: `${target.pathname}${target.search}`,
+				method: req.method,
+				headers
+			},
+			(up) => {
+				res.writeHead(up.statusCode ?? 502, up.headers);
+				up.pipe(res);
+			}
+		);
+		upstream.on("error", (error) => {
+			if (res.headersSent) {
+				res.destroy();
+				return;
+			}
+			res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
+			res.end(
+				JSON.stringify({
+					ok: false,
+					message: `管理服务不可达（${origin}）：${error?.message ?? error}`,
+					hint: "宿主半本应自动拉起它；起不来时看 data/admin_ui.log"
+				})
+			);
+		});
+		req.pipe(upstream);
+	};
+
+	try {
+		const dispose = webServer.register({ kind: "prefix", path: prefix, handler });
+		bootTrace(ctx, `已挂同源路由 ${prefix} -> ${origin}`);
+		return dispose;
+	} catch (error) {
+		// 重复注册（比如两个 DSH 实例共用一个 profile）会让宿主抛错 —— 不能因此
+		// 让整个插件加载失败，面板退化成走跨源地址即可。
+		ctx.logger?.warn?.(`[bionic-panel] 同源挂载 ${prefix} 失败：${error?.message ?? error}`);
+		bootTrace(ctx, `同源挂载失败：${error?.message ?? error}`);
+		return undefined;
+	}
 }

@@ -213,7 +213,7 @@ page = mainReg.Component(face);
 let nodes = flatten(page);
 let iframe = nodes.find((n) => n?.type === "iframe");
 check("服务在线时渲染 iframe 并指向 localhost",
-	iframe?.type === "iframe" && /^http:\/\/127\.0\.0\.1:\d+/.test(String(iframe?.props?.src ?? "")),
+	iframe?.type === "iframe" && (String(iframe?.props?.src ?? "").startsWith("/bionic-panel/") || /^http:\/\/127\.0\.0\.1:[0-9]+/.test(String(iframe?.props?.src ?? ""))),
 	`${iframe?.type} ${iframe?.props?.src}`);
 check("服务在线时状态为 ready",
 	page?.props?.["data-dsh-bionic-state"] === "ready",
@@ -242,7 +242,7 @@ iframe = nodes.find((n) => n?.type === "iframe");
 const warnNode = nodes.find((n) => n?.props?.["data-dsh-bionic-warn"]);
 const pageText = JSON.stringify(nodes);
 check("服务不可用时 iframe 仍然渲染（不把面板判死）",
-	iframe?.type === "iframe" && /^http:\/\/127\.0\.0\.1:\d+/.test(String(iframe?.props?.src ?? "")),
+	iframe?.type === "iframe" && (String(iframe?.props?.src ?? "").startsWith("/bionic-panel/") || /^http:\/\/127\.0\.0\.1:[0-9]+/.test(String(iframe?.props?.src ?? ""))),
 	`${iframe?.type} ${iframe?.props?.src}`);
 check("服务不可用时进入 probing 而不是直接报死",
 	page?.props?.["data-dsh-bionic-state"] === "probing",

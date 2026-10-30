@@ -27,6 +27,12 @@ const STEPS = [
 		optional: true
 	},
 	{
+		name: "同源反代挂载",
+		script: "test/proxy-mount.mjs",
+		// 需要真起一个 python 管理服务，环境缺 python 时算 SKIP 不算坏
+		optional: true
+	},
+	{
 		name: "安装态自检",
 		script: "verify-install.mjs",
 		optional: false

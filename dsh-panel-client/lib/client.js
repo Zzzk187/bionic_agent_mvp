@@ -25,7 +25,15 @@ window.__ModuleLoader__.load({
 		const PANEL_ID = "bionic-agent-panel";
 		const PANEL_ORDER = 30;
 		const NS = "dsh-bionic-agent-panel";
-		const DEFAULT_ADMIN_URL = "http://127.0.0.1:8899";
+		// 同源挂载前缀：宿主半把它反代到 FastAPI。这条路不受跨源策略影响。
+		// 必须与 lib/index.js 的 DEFAULTS.mountPath 一致（两半之间唯一的共享契约，
+		// 而 client 半拿不到 config —— dsh-client-modules 只按 id 加载，不传 config）。
+		const MOUNT_PATH = "/bionic-panel";
+		// 跨源退路：宿主没有 webServer 或挂载失败时用。靠 8899 侧 CORS 放行。
+		const FALLBACK_ADMIN_URL = "http://127.0.0.1:8899";
+		// 同源 iframe 地址：带上 base 查询参数，让面板页把自身的 /api/... 也补上前缀
+		// （同源反代下页面路径是 /bionic-panel/，绝对路径 /api 会打到 DSH 自己身上）。
+		const MOUNT_SRC = `${MOUNT_PATH}/?base=${encodeURIComponent(MOUNT_PATH)}`;
 		// 探测节奏：宿主半冷启动要 spawn python + 起 uvicorn，实测约 5~15 秒。
 		// 探得太急会一直刷状态，探得太稀又会让用户对着空白等。
 		const PROBE_INTERVAL_MS = 800;
@@ -145,18 +153,25 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// 面板页：iframe 里是 8899 的 FastAPI 管理界面。
+		// 面板页：iframe 里是 FastAPI 管理界面。
+		//
+		// 两条路，优先同源：
+		//   1) 同源前缀 /bionic-panel —— 宿主半用 ctx.webServer 把自己的 HTTP 服务
+		//      反代到 8899。不受任何浏览器跨源策略影响，也顺带消灭了
+		//      "client 半硬编码 8899、host 半可改 adminUrl" 的错位。
+		//   2) 跨源直连 http://127.0.0.1:8899 —— 宿主没有 webServer（非 Web 宿主）
+		//      或挂载失败时的退路，靠 8899 侧的 CORS 放行。
 		//
 		// 设计取舍（重要）：iframe 一律渲染，探测只用来叠加一条说明条。
-		// 反过来做（探不到就不渲染 iframe）看着更"严谨"，实际更脆：探测走的是
-		// 跨源 fetch，只要 CORS/拦截/版本有任何一处不对，明明能用的面板就会被
-		// 自己判死、整个变成错误页。所以让 iframe 自己加载，探测失败只是在顶部
-		// 加一条可读的原因 —— 最坏情况退化成"能用的面板 + 一条多余提示"，
-		// 而不是"完全打不开"。
+		// 反过来做（探不到就不渲染 iframe）看着更"严谨"，实际更脆：探测只要
+		// CORS/拦截/版本有任何一处不对，明明能用的面板就会被自己判死、整个变成
+		// 错误页。所以让 iframe 自己加载，探测失败只是在顶部加一条可读的原因。
 		function BionicPanelPage() {
 			// status: "probing" 服务还没应答 / "ready" 已应答 / "down" 等超时还没应答
 			const [status, setStatus] = react.useState("probing");
 			const [detail, setDetail] = react.useState("");
+			// 当前选用的地址：默认先走同源挂载。
+			const [src, setSrc] = react.useState(MOUNT_SRC);
 			// iframe 的重挂载计数。服务是宿主半 spawn 出来的，冷启动要十几秒；
 			// 如果 iframe 先挂上、服务后起来，浏览器已经把那次请求判失败，
 			// iframe 会停在错误页不会自愈。所以服务晚到时改 key 让它重新加载。
@@ -168,15 +183,36 @@ window.__ModuleLoader__.load({
 				// 宿主半最多等 startTimeoutMs（20s）才判定失败，这里探得更久一点，
 				// 保证"服务起来了但探测已经放弃"这种尴尬不会发生。
 				const deadline = Date.now() + PROBE_TIMEOUT_MS;
+				// 同源探不通就永久切到跨源退路，不来回抖。
+				let preferMount = true;
 				const tick = async () => {
 					if (cancelled) return;
 					attempt += 1;
+					if (preferMount) {
+						try {
+							const resp = await fetch(`${MOUNT_PATH}/api/stats`, { method: "GET" });
+							if (cancelled) return;
+							if (resp.ok) {
+								setStatus("ready");
+								setDetail("");
+								setSrc(MOUNT_SRC);
+								if (attempt > 1) setReloadKey((n) => n + 1);
+								return;
+							}
+							setDetail(`HTTP ${resp.status}`);
+						} catch (error) {
+							if (cancelled) return;
+							preferMount = false;
+							setDetail(String(error?.message ?? error));
+						}
+					}
 					try {
-						const response = await fetch(`${DEFAULT_ADMIN_URL}/api/stats`, { method: "GET" });
+						const response = await fetch(`${FALLBACK_ADMIN_URL}/api/stats`, { method: "GET" });
 						if (cancelled) return;
 						if (response.ok) {
 							setStatus("ready");
 							setDetail("");
+							setSrc(FALLBACK_ADMIN_URL);
 							// 只有"之前探失败过"才需要重挂 iframe；一路顺利就别动它。
 							if (attempt > 1) setReloadKey((n) => n + 1);
 							return;
@@ -213,18 +249,18 @@ window.__ModuleLoader__.load({
 					children: status === "down"
 						? [
 							react_jsx_runtime.jsx("strong", { children: tt("panel.downTitle") }),
-							` — ${tt("panel.downUrl")} ${DEFAULT_ADMIN_URL}（${tt("panel.downReason")}：${detail}）。`,
+							` — ${tt("panel.downUrl")} ${FALLBACK_ADMIN_URL}（${tt("panel.downReason")}：${detail}）。`,
 							` ${tt("panel.downLog")}`
 						]
 						: [
 							react_jsx_runtime.jsx("strong", { children: tt("panel.probing") }),
-							` — ${DEFAULT_ADMIN_URL}`
+							` — ${FALLBACK_ADMIN_URL}`
 						]
 				}));
 			}
 			children.push(react_jsx_runtime.jsx("iframe", {
 				key: reloadKey,
-				src: DEFAULT_ADMIN_URL,
+				src,
 				title: tt("panel.title"),
 				style: { flex: "1 1 auto", width: "100%", border: "none", display: "block", minHeight: 0 },
 				allow: "clipboard-read; clipboard-write"

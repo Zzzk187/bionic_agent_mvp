@@ -209,17 +209,28 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// 基路径：独立打开时为空串（同源 8899）；被 DSH 以 /bionic-panel 前缀反代时，
+// 页面里的绝对路径 /api/... 必须补此前缀，否则请求会打到 DSH 自己的路由上。
+const BASE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('base');
+    if (q) return q.replace(/\/+$/, '');
+  } catch {}
+  return (typeof window!=='undefined' && window.__BIONIC_BASE__) || '';
+})();
+const withBase = u => (u.startsWith('/') ? BASE + u : u);
+
 // 报到：让后端记一笔"页面真的在浏览器里跑起来了"。
 //
 // 为什么要它：宿主半的 panel-boot.log 只能证明 Node 侧加载了插件；iframe 到底
 // 有没有真的渲染出来、脚本有没有真的求值，只有页面自己知道。重启后若出问题，
 // data/panel-client.log 有记录 = 浏览器端没问题、该查别处；没有 = 卡在加载前。
-fetch('/api/ping', {method:'GET'}).catch(()=>{});
+fetch(withBase('/api/ping'), {method:'GET'}).catch(()=>{});
 
 const $ = (s,el=document)=>el.querySelector(s);
 const $$ = (s,el=document)=>[...el.querySelectorAll(s)];
 const api = async (url, opts={}) => {
-  const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+  const r = await fetch(withBase(url), Object.assign({headers:{'Content-Type':'application/json'}}, opts));
   const j = await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
   return j;
 };
