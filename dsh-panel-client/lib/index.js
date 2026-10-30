@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const PKG_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**
- * 项目根的默认值：本包通常就放在 bionic_agent_mvp 目录下，
+ * 项目根的默认值：本包通常就放在 bionic-agent-mcp 目录下，
  * 所以用「包的上一级」推导，而不是写死某个人的绝对路径——
  * 这样换台机器、换个目录 clone 下来都还能用。
  */
@@ -42,7 +42,7 @@ const DEFAULTS = {
 	autoStart: true,
 	/** Python 解释器；留空则用内置候选（见 resolvePython）。 */
 	pythonPath: "",
-	/** bionic_agent_mvp 项目根目录（含 app/ 与 data/）。 */
+	/** bionic-agent-mcp 项目根目录（含 app/ 与 data/）。 */
 	projectDir: DEFAULT_PROJECT_DIR,
 	/** 服务启动后最多等多久（毫秒）。 */
 	startTimeoutMs: 20000,

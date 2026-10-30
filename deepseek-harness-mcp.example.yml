@@ -18,11 +18,11 @@
   config:
     serverName: bionic-agent
     transport: stdio
-    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    command: 'C:/YOUR/PATH/bionic-agent-mcp/.venv/Scripts/python.exe'
     args:
       - '-m'
       - 'app.mcp_server'
-    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'
+    cwd: 'C:/YOUR/PATH/bionic-agent-mcp'
 
 # --- Governance instance (Phase 5/6/7/8 tools, 33) — attach on demand ---
 - id: bionic-agent-governance
@@ -30,8 +30,8 @@
   config:
     serverName: bionic-agent-governance
     transport: stdio
-    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    command: 'C:/YOUR/PATH/bionic-agent-mcp/.venv/Scripts/python.exe'
     args:
       - '-m'
       - 'app.mcp_server_gov'
-    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'
+    cwd: 'C:/YOUR/PATH/bionic-agent-mcp'

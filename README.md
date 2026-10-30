@@ -40,7 +40,7 @@
 ### 1. 装依赖（建议用虚拟环境）
 
 ```bash
-cd bionic_agent_mvp
+cd bionic-agent-mcp
 python -m venv .venv
 # Windows
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -72,18 +72,18 @@ python -m venv .venv
   config:
     serverName: bionic-agent
     transport: stdio
-    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    command: 'C:/YOUR/PATH/bionic-agent-mcp/.venv/Scripts/python.exe'
     args: ['-m', 'app.mcp_server']
-    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'
+    cwd: 'C:/YOUR/PATH/bionic-agent-mcp'
 
 - id: bionic-agent-governance
   name: '@deepseek-ai/dsh-mcp-client'
   config:
     serverName: bionic-agent-governance
     transport: stdio
-    command: 'C:/YOUR/PATH/bionic_agent_mvp/.venv/Scripts/python.exe'
+    command: 'C:/YOUR/PATH/bionic-agent-mcp/.venv/Scripts/python.exe'
     args: ['-m', 'app.mcp_server_gov']
-    cwd: 'C:/YOUR/PATH/bionic_agent_mvp'
+    cwd: 'C:/YOUR/PATH/bionic-agent-mcp'
 ```
 
 > ⚠️ **不要**用 `args: ['.../app/mcp_server_gov.py']`（脚本式直接跑）来启动治理实例——
@@ -235,7 +235,7 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 ## 项目结构
 
 ```
-bionic_agent_mvp/
+bionic-agent-mcp/
 ├── app/
 │   ├── mcp_server.py        # 双实例定义（mcp + mcp_gov）+ 21 核心工具
 │   ├── mcp_server_gov.py    # 治理实例启动入口（python -m app.mcp_server_gov）
