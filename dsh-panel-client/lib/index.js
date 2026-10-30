@@ -19,6 +19,12 @@ import { fileURLToPath } from "node:url";
 const PKG_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**
+ * bootTrace() 落盘用的目录。apply() 一开始就按 config 更新它，
+ * 让痕迹和 admin_ui.log 永远落在同一个 projectDir 下。
+ */
+let traceProjectDir = null;
+
+/**
  * 项目根的默认值：本包通常就放在 bionic-agent-mcp 目录下，
  * 所以用「包的上一级」推导，而不是写死某个人的绝对路径——
  * 这样换台机器、换个目录 clone 下来都还能用。
@@ -252,6 +258,9 @@ function launchAdmin(config, projectDir, port) {
  */
 export function apply(ctx, config = {}) {
 	const merged = { ...DEFAULTS, ...config };
+	// 先把 projectDir 定下来，后面所有落盘（面板痕迹 / admin_ui.log）都读它，
+	// 保证两者不会落到两个不同目录里去。
+	traceProjectDir = resolve(String(merged.projectDir ?? DEFAULTS.projectDir));
 	const configuredUrl = String(merged.adminUrl ?? DEFAULTS.adminUrl);
 	const configuredPort = portOf(configuredUrl, merged.port);
 	// 实际在用的地址。端口被别的程序占着时会改成旁边的端口，
@@ -380,7 +389,10 @@ function bootTrace(ctx, message, level = "info") {
 		log?.(`[bionic-panel] ${message}`);
 		if (process.env.BIONIC_PANEL_NO_TRACE === "1") return;
 		const line = `${new Date().toISOString()} pid=${process.pid} ${message}\n`;
-		const dir = resolve(String(DEFAULTS.projectDir), "data");
+		// 用运行时解析出的 projectDir（config 里可能改过），而不是写死默认值 ——
+		// 否则 config 改了 projectDir，痕迹和 admin_ui.log 会落到两个不同目录，
+		// 排查时互相找不到。
+		const dir = resolve(String(traceProjectDir ?? DEFAULTS.projectDir), "data");
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 		appendFileSync(resolve(dir, "panel-boot.log"), line, "utf8");
 	} catch {

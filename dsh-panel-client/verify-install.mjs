@@ -221,15 +221,52 @@ if (listening) {
 //
 // 这一项在"还没重启 DSH"时必然为空，属于预期状态而非缺陷 —— 所以用 pending
 // 而不是 fail，避免把"你还没重启"报成"插件坏了"。
+//
+// 但日志只是「快照」，会被清理误删（我自己就删过一次假信号）。所以这里还并列一个
+// 更强的证据：DSH 自己端口上那条活着的前缀反代路由 —— 它由宿主半 apply() 注册，
+// 只要还能取到 /bionic-panel/api/stats 的真实 JSON，就证明宿主半在运行中确实跑过，
+// 这比任何日志都硬（活着的路由伪造不了）。两者任一成立即算通过。
 const bootLog = resolve(PKG_DIR, "..", "data", "panel-boot.log");
+let bootOk = false;
+let bootDetail = "";
+
+// (a) 日志痕迹
 if (existsSync(bootLog)) {
 	const lines = readFileSync(bootLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	check("宿主半加载过（data/panel-boot.log 有痕迹）", lines.length > 0, `${lines.length} 行`);
-	console.log("  最近几行：");
-	for (const line of lines.slice(-6)) console.log("    " + line);
+	if (lines.length > 0) {
+		bootOk = true;
+		bootDetail = `${lines.length} 行痕迹`;
+		console.log("  最近几行：");
+		for (const line of lines.slice(-6)) console.log("    " + line);
+	}
+}
+
+// (b) 活路由证据：DSH 端口上的同源反代还在应答
+if (!bootOk) {
+	const dshUrl = (process.env.DSH_WEB_URL || "").replace(/\/+$/, "");
+	if (dshUrl) {
+		try {
+			const res = await fetch(`${dshUrl}/bionic-panel/api/stats`, { signal: AbortSignal.timeout(4000) });
+			const body = await res.json();
+			if (res.ok && body?.ok === true && body?.data !== undefined) {
+				bootOk = true;
+				bootDetail = `活路由应答 ${dshUrl}/bionic-panel/api/stats（比日志更硬的证据）`;
+			} else {
+				bootDetail = `DSH 端口有响应但不是我们的路由（HTTP ${res.status}）`;
+			}
+		} catch (error) {
+			bootDetail = `探测 ${dshUrl} 失败：${String(error?.message ?? error)}`;
+		}
+	} else {
+		bootDetail = "环境里没有 DSH_WEB_URL，无法做活路由探测";
+	}
+}
+
+if (bootOk) {
+	check("宿主半加载过（日志痕迹 或 DSH 端口上的活路由）", true, bootDetail);
 } else {
-	pending("宿主半加载过（data/panel-boot.log 有痕迹）",
-		"还没有痕迹：若你尚未重启 DSH 属正常；重启后仍为空，说明插件被宿主静默跳过（多半是 dsh.engines.dsh 不满足）");
+	pending("宿主半加载过（日志痕迹 或 DSH 端口上的活路由）",
+		`还没有证据：若你尚未重启 DSH 属正常；重启后仍无，说明插件被宿主静默跳过（多半是 dsh.engines.dsh 不满足）。${bootDetail}`);
 }
 
 // ── 9. 浏览器半的报到痕迹（判断「iframe 到底渲染没渲染」的唯一直接证据）──
