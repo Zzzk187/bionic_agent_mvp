@@ -310,7 +310,50 @@ export function apply(ctx, config = {}) {
 		}
 		const projectDir = resolve(String(merged.projectDir ?? DEFAULTS.projectDir));
 
-		void (async () => {
+		// ── 自愈 ──────────────────────────────────────────────────────
+		// DSH 一直开着的时候，python 子进程可能自己崩掉（OOM、依赖缺失、
+		// 用户手滑 kill）。宿主半原本只在 apply 时拉一次服务，于是面板会
+		// 一直白屏到下次重启 DSH —— 而用户根本不知道要重启。
+		// 这里挂个监督：非主动停止的退出按指数退避重拉，最多 MAX_RESTARTS 次。
+		// 不做无限重试是有意的：起不来的原因（比如 python 里缺 fastapi）
+		// 不会自己好，无限重拉只会把日志刷满、白占 CPU。
+		const MAX_RESTARTS = 5;
+		let restarts = 0;
+		let restartTimer = null;
+		let stopping = false;
+
+		function watch(proc) {
+			const child = proc?.child;
+			if (!child) return;
+			child.once("exit", (code, signal) => {
+				// 主动 dispose、或正在重拉过程中，都不该再触发新一轮。
+				if (stopping || disposed) return;
+				if (restarts >= MAX_RESTARTS) {
+					bootTrace(
+						ctx,
+						`管理服务反复退出（已重拉 ${restarts} 次），不再重试；排查 ${proc?.logPath ?? "data/admin_ui.log"}`,
+						"warn"
+					);
+					return;
+				}
+				restarts += 1;
+				const delay = Math.min(30000, 1000 * 2 ** (restarts - 1));
+				bootTrace(
+					ctx,
+					`管理服务进程退出（code=${code ?? "-"}${signal ? `, signal=${signal}` : ""}），${delay}ms 后重拉（第 ${restarts}/${MAX_RESTARTS} 次）`,
+					"warn"
+				);
+				restartTimer = setTimeout(() => {
+					restartTimer = null;
+					if (stopping || disposed) return;
+					void startOnce();
+				}, delay);
+				// 别让这个定时器把宿主进程吊着不退出。
+				restartTimer.unref?.();
+			});
+		}
+
+		const startOnce = async () => {
 			// 端口有人听时，先问清楚"是不是我们自己"。
 			// 直接复用会在别的服务占着 8899 时把面板接到别人页面上——
 			// 现象是打开后一片乱码，且没有任何报错，最难查。
@@ -330,6 +373,7 @@ export function apply(ctx, config = {}) {
 				bootTrace(ctx, `启动管理服务失败：${launched.error?.message ?? launched.error}`, "warn");
 				return;
 			}
+			watch(launched);
 			const up = await waitUntilListening(port, merged.startTimeoutMs);
 			if (up) {
 				// 端口通了还要认一下形状：万一刚起来的那个进程被别人抢了先，
@@ -347,10 +391,17 @@ export function apply(ctx, config = {}) {
 					"warn"
 				);
 			}
-		})();
+		};
+
+		void startOnce();
 
 		return () => {
 			disposed = true;
+			stopping = true;
+			if (restartTimer !== null) {
+				clearTimeout(restartTimer);
+				restartTimer = null;
+			}
 			// 只收自己起的；别人起的实例不碰。
 			launched?.kill();
 			launched = null;

@@ -142,6 +142,11 @@ bionic-agent-admin
 > 这种形态下不再需要手动常驻 `bionic-agent-admin`。若不想装插件，用纯浏览器开
 > `http://127.0.0.1:8899` 同样可用，且零安装。要卸载：
 > `python dsh-panel-client/install.py --uninstall`。
+>
+> **崩了会自己起来**：python 子进程意外退出（OOM、依赖装坏、被手滑 kill）时，
+> 宿主半按 1s → 2s → 4s → … 退避重拉，最多 5 次，每次都写进 `data/panel-boot.log`。
+> 不做无限重试是有意的——"python 里没装 fastapi"这类原因不会自己好，无限重拉只会
+> 刷满日志。连续 5 次都起不来时，那行 warn 就是你要看的诊断结论，里面带日志路径。
 
 #### 装完但侧边栏没图标？先跑自检，别靠猜
 
@@ -287,15 +292,34 @@ bionic-agent-mcp/
 
 ## 测试
 
+### 插件与面板（Node，`node dsh-panel-client/test/all.mjs` 一把跑完）
+
+| 套件 | 覆盖 |
+|---|---|
+| `test/client-smoke.mjs` | client 半：slot 注册、iframe 地址、布局不脱离文档流、探测假就绪、重试自愈 |
+| `test/host-cordis.mjs` | 真 cordis 加载宿主半：config 透传、服务拉起与回收 |
+| `test/layer-config.mjs` | profile 层叠：bundle 未被 skipped、patch config 进入配置树 |
+| `test/proxy-mount.mjs` | 同源反代：路由、查询串透传、502 可读、写保护三种拒绝 |
+| `test/port-conflict.mjs` | 8899 被别的程序占着时换端口，且不误杀别人 |
+| `test/host-webserver.mjs` | 真宿主 WebServer 走 `ctx.inject(["webServer"])` 真实路径 |
+| `test/self-heal.mjs` | 杀掉 python 子进程后自动重拉（boot 标识变化即证） |
+| `verify-install.mjs` | 安装态 19 项：宿主判定链 + 两份痕迹 + 活路由 |
+
+> `verify-install.mjs` 里两项（`panel-boot.log` / `panel-client.log`）不打勾是正常的：
+> 它们要等你**重启 DSH 并点开一次面板**之后才有证据。刻意写成 `[WAIT]` 而不是猜测通过。
+
+### Python 侧（真实 SQLite，无 mock）
+
 | 套件 | 覆盖 |
 |---|---|
 | `tests/smoke_test.py` | DB 迁移与记忆读写（离线，临时库） |
 | `tests/embedding_test.py` | 向量持久化兼容 |
 | `tests/verify_mcp_split_test.py` | 双实例工具注册验证（核心 21 + 治理 33 = 54） |
 
-全部基于真实 SQLite，无 mock。示例用法：
+示例用法：
 
 ```bash
+node dsh-panel-client/test/all.mjs
 .venv/Scripts/python tests/smoke_test.py
 .venv/Scripts/python tests/verify_mcp_split_test.py
 ```

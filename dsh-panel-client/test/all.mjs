@@ -51,6 +51,12 @@ const STEPS = [
 		optional: true
 	},
 	{
+		name: "服务崩溃后自愈",
+		script: "test/self-heal.mjs",
+		// 要真起 python 服务并把它杀掉；最慢的一条，缺 python 时 SKIP
+		optional: true
+	},
+	{
 		name: "安装态自检",
 		script: "verify-install.mjs",
 		optional: false
