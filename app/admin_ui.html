@@ -499,15 +499,17 @@ $('#govWarmup').onclick = async ()=>{ const j=await api('/api/embedding/warmup',
 $('#govScore').onclick = async ()=>{
   const j=await api(`/api/governance/score?category=${encodeURIComponent($('#govCategory').value)}&limit=50`);
   if(!j.ok){ toast(j.message,'err'); return; }
-  const rows=(j.data.scores||j.data||[]).slice(0,50);
-  $('#govOut').innerHTML=`<h3>评分扫描 (${rows.length})</h3><table><tr><th>id</th><th>分类</th><th>重要</th><th>置信</th><th>新鲜</th><th>访问</th></tr>${
-    rows.map(r=>`<tr><td>#${r.id}</td><td>${esc(r.category||'')}</td><td>${r.importance_score??'-'}</td><td>${r.confidence_score??'-'}</td><td>${r.freshness_score??'-'}</td><td>${r.access_count??'-'}</td></tr>`).join('')
-  }</table>`;
+  // 后端返回 {ok, data:{ok, scored, results:[...]}}；原来读 j.data.scores 拿到的是对象，
+  // 对对象调 .slice 会抛异常，界面就一片空白。
+  const rows=(j.data?.results||[]).slice(0,50);
+  $('#govOut').innerHTML=`<h3>评分扫描 (${rows.length})</h3>`+(rows.length?`<table><tr><th>id</th><th>分类</th><th>重要</th><th>置信</th><th>新鲜</th><th>访问</th></tr>${
+    rows.map(r=>`<tr><td>#${r.memory_id??r.id}</td><td>${esc(r.category||'')}</td><td>${r.importance??r.importance_score??'-'}</td><td>${r.confidence_score??'-'}</td><td>${r.freshness!=null?Number(r.freshness).toFixed(1):(r.freshness_score??'-')}</td><td>${r.access_count??'-'}</td></tr>`).join('')
+  }</table>`:'<div class="empty">没有可评分的记忆</div>');
 };
 $('#govDetect').onclick = async ()=>{
   const j=await api('/api/governance/detect',{method:'POST',body:JSON.stringify({category:$('#govCategory').value})});
   if(!j.ok){ toast(j.message,'err'); return; }
-  const rows=j.data.findings||j.data||[];
+  const rows=j.data?.findings||[];
   $('#govOut').innerHTML=`<h3>冲突检测 (${rows.length})</h3>`+(rows.length?`<table><tr><th>id_a</th><th>id_b</th><th>类型</th><th>相似</th><th>建议</th></tr>${
     rows.map(r=>`<tr><td>#${r.memory_id}</td><td>#${r.candidate_memory_id}</td><td>${esc(r.conflict_type)}</td><td>${r.similarity?.toFixed?.(3)??r.similarity}</td><td>${esc(r.recommendation)}</td></tr>`).join('')
   }</table>`:'<div class="empty">未发现冲突</div>');
@@ -515,14 +517,15 @@ $('#govDetect').onclick = async ()=>{
 $('#govDup').onclick = async ()=>{
   const j=await api(`/api/governance/duplicates?category=${encodeURIComponent($('#govCategory').value)}`);
   if(!j.ok){ toast(j.message,'err'); return; }
-  const rows=j.data||[];
-  $('#govOut').innerHTML=`<h3>重复识别 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><b>#${r.id||r.memory_id}</b> ${esc(r.content||'')}</div>`).join(''):'<div class="empty">未发现重复</div>');
+  // find_duplicate_memories 返回 {ok, duplicate_count, duplicates:[...]}
+  const rows=j.data?.duplicates||j.data?.findings||[];
+  $('#govOut').innerHTML=`<h3>重复识别 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><b>#${r.memory_id??r.id}</b> ↔ <b>#${r.candidate_memory_id??'-'}</b> ${esc(r.content||r.reason||'')}</div>`).join(''):'<div class="empty">未发现重复</div>');
 };
 $('#govConsol').onclick = async ()=>{
   const j=await api(`/api/governance/consolidation?limit=50`);
   if(!j.ok){ toast(j.message,'err'); return; }
-  const rows=j.data.candidates||j.data||[];
-  $('#govOut').innerHTML=`<h3>巩固候选 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><span class="badge ${r.status}">${esc(r.status)}</span> <b>${esc(r.kind)}</b> ${esc(r.title||'')}<div class="muted">${esc(r.detail||'')}</div></div>`).join(''):'<div class="empty">暂无候选</div>');
+  const rows=j.data?.candidates||[];
+  $('#govOut').innerHTML=`<h3>巩固候选 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><span class="badge ${r.status}">${esc(r.status)}</span> <b>${esc(r.kind||r.type||'')}</b> ${esc(r.title||'')}<div class="muted">${esc(r.detail||'')}</div></div>`).join(''):'<div class="empty">暂无候选</div>');
 };
 
 /* ---------- 启动 ---------- */

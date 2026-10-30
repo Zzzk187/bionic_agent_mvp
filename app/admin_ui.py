@@ -262,18 +262,42 @@ def api_warmup():
 
 @app.get("/api/governance/score")
 def api_score(category: str = Query(""), limit: int = Query(50, ge=1, le=200)):
-    return _run(gov.score_memories, None, limit, category, True)
+    # 直接调服务函数并自己包一层，而不是先包成 JSONResponse 再反序列化回来改。
+    # score_memories 只返回评分列、不含 category，界面要显示分类所以这里补齐。
+    try:
+        result = gov.score_memories(None, limit, category, True)
+    except Exception as exc:
+        return _err(f"{type(exc).__name__}: {exc}", status=500)
+    if not isinstance(result, dict) or result.get("ok") is False:
+        return _err(result.get("message", "评分失败") if isinstance(result, dict) else "评分失败",
+                    status=404)
+    rows = result.get("results") or []
+    ids = [r.get("memory_id") for r in rows if isinstance(r, dict) and r.get("memory_id")]
+    if ids:
+        from app.db import connect
+        placeholders = ",".join("?" * len(ids))
+        with connect() as conn:
+            cats = {row[0]: (row[1] or "") for row in conn.execute(
+                f"SELECT id, category FROM memories WHERE id IN ({placeholders})", ids)}
+        for r in rows:
+            if isinstance(r, dict) and not r.get("category"):
+                r["category"] = cats.get(r.get("memory_id"), "")
+    return _ok(result)
 
 
 @app.post("/api/governance/detect")
 def api_detect(payload: dict):
+    # 注意：detect_conflicts(memory_ids, category, candidate_count, persist)
+    # 第三个位置参数是 candidate_count（int），不能传 "" 占位，否则 int("") 抛错。
     return _run(gov.detect_conflicts, None, payload.get("category", "") or "",
-               payload.get("rule_version", "") or "")
+                payload.get("candidate_count", 8), True)
 
 
 @app.get("/api/governance/conflicts")
-def api_conflicts(resolution: str = Query(""), memory_id: int = Query(0)):
-    return _run(gov.list_conflicts, memory_id or None, resolution, "")
+def api_conflicts(resolution: str = Query(""), memory_id: int = Query(0),
+                  limit: int = Query(50, ge=1, le=200)):
+    # list_conflicts(memory_id, resolution, limit) —— 这里第三个参数是 limit(int)。
+    return _run(gov.list_conflicts, memory_id or None, resolution, limit)
 
 
 @app.post("/api/governance/conflicts/{conflict_id}/review")
@@ -286,13 +310,13 @@ def api_review_conflict(conflict_id: int, payload: dict):
 def api_maintenance_preview(mode: str = Query("dry_run"),
                             category: str = Query(""),
                             limit: int = Query(50, ge=1, le=200)):
-    return _run(core.run_memory_maintenance, mode, limit, category, "")
+    return _run(core.run_memory_maintenance, mode, limit, category)
 
 
 @app.post("/api/governance/maintenance/apply")
 def api_maintenance_apply(payload: dict):
     return _run(core.run_memory_maintenance, "apply_approved",
-               int(payload.get("limit", 50)), payload.get("category", "") or "", "")
+               int(payload.get("limit", 50)), payload.get("category", "") or "")
 
 
 @app.get("/api/governance/consolidation")
@@ -301,8 +325,9 @@ def api_consolidation(status: str = Query(""), limit: int = Query(50, ge=1, le=2
 
 
 @app.get("/api/governance/duplicates")
-def api_duplicates(category: str = Query("")):
-    return _run(life.find_duplicate_memories, None, category)
+def api_duplicates(category: str = Query(""), candidate_count: int = Query(8, ge=1, le=50)):
+    # find_duplicate_memories(memory_ids, category, candidate_count)
+    return _run(life.find_duplicate_memories, None, category, candidate_count)
 
 
 # ---------------------------------------------------------------------------
