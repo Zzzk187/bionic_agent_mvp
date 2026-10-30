@@ -128,6 +128,18 @@ console.log("PASS: ModuleLoader.load 被调用, id =", loaded.id);
 const exported = loaded.factory(requireStub);
 console.log("PASS: factory 返回, apply =", typeof exported.apply, "| inject =", JSON.stringify(exported.inject));
 
+// 契约：client 半一被宿主求值就要主动报到（?source=client-boot）。
+// 这条之所以要单独断言：它是「插件有没有被浏览器端真正加载」的唯一自动证据，
+// 退化成「等用户点开面板」就又变成需要人工确认的黑盒了。
+await new Promise((r) => setTimeout(r, 10));
+const bootReport = reactStub.__fetched.find((u) => String(u).includes("source=client-boot"));
+if (!bootReport) {
+	console.error("FAIL: client 半没有主动报到（应请求 /api/ping?source=client-boot），实际请求:",
+		JSON.stringify(reactStub.__fetched));
+	process.exit(1);
+}
+console.log("PASS: client 半一加载就主动报到 —", bootReport);
+
 // 假 ctx：记录注册了什么
 const registrations = [];
 const injections = [];
