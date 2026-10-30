@@ -143,6 +143,33 @@ bionic-agent-admin
 > `http://127.0.0.1:8899` 同样可用，且零安装。要卸载：
 > `python dsh-panel-client/install.py --uninstall`。
 
+#### 装完但侧边栏没图标？先跑自检，别靠猜
+
+```bash
+node dsh-panel-client/verify-install.mjs
+```
+
+它会逐项验证宿主的判定链（profile 目录、`dependencies`、`dsh.profile.bundles`、
+node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版本、8899 是否在
+监听），并且**用两份日志把故障定位到具体一半**：
+
+| `data/panel-boot.log` | `data/panel-client.log` | 说明 |
+| --- | --- | --- |
+| 有 | 有 | 通路全通 |
+| 有 | 无 | Node 侧加载成功，卡在浏览器端（client.js 求值失败 / 图标没挂上） |
+| 无 | — | 宿主根本没加载插件，多半是 `dsh.engines.dsh` 不满足被**静默跳过** |
+
+- `panel-boot.log`：宿主半 `apply()` 一被调用就落一行，证明 Node 侧加载了。
+- `panel-client.log`：面板页面在 iframe 里跑起来后 `fetch('/api/ping')` 报到，
+  证明浏览器侧真的渲染了。脚本探测和直接打开 8899 都不算，只认宿主 iframe
+  （`referer` 带 DSH 端口的那种）。
+- 两份日志都会写进项目 `data/` 目录，已在 `.gitignore` 里。
+
+> 一个容易忽略的坑：面板服务在 8899，宿主页面在随机端口，**这是跨源**。如果
+> 管理服务没给 CORS 头，跨源 `fetch` 会被浏览器拦掉——服务明明正常，探测也会
+> 判成"没响应"。`app/admin_ui.py` 用 `CORSMiddleware` 限死本机来源
+> （`127.0.0.1`/`localhost`/`[::1]` 任意端口）来解决，不放开 `*`。
+
 ---
 
 ## 项目结构
