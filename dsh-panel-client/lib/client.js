@@ -26,6 +26,10 @@ window.__ModuleLoader__.load({
 		const PANEL_ORDER = 30;
 		const NS = "dsh-bionic-agent-panel";
 		const DEFAULT_ADMIN_URL = "http://127.0.0.1:8899";
+		// 探测节奏：宿主半冷启动要 spawn python + 起 uvicorn，实测约 5~15 秒。
+		// 探得太急会一直刷状态，探得太稀又会让用户对着空白等。
+		const PROBE_INTERVAL_MS = 800;
+		const PROBE_TIMEOUT_MS = 30000;
 
 		const zh = {
 			"entry.label": "记忆/任务",
@@ -150,38 +154,76 @@ window.__ModuleLoader__.load({
 		// 加一条可读的原因 —— 最坏情况退化成"能用的面板 + 一条多余提示"，
 		// 而不是"完全打不开"。
 		function BionicPanelPage() {
-			const [warn, setWarn] = react.useState(null);
+			// status: "probing" 服务还没应答 / "ready" 已应答 / "down" 等超时还没应答
+			const [status, setStatus] = react.useState("probing");
+			const [detail, setDetail] = react.useState("");
+			// iframe 的重挂载计数。服务是宿主半 spawn 出来的，冷启动要十几秒；
+			// 如果 iframe 先挂上、服务后起来，浏览器已经把那次请求判失败，
+			// iframe 会停在错误页不会自愈。所以服务晚到时改 key 让它重新加载。
+			const [reloadKey, setReloadKey] = react.useState(0);
 			react.useEffect(() => {
 				let cancelled = false;
-				(async () => {
+				let timer = null;
+				let attempt = 0;
+				// 宿主半最多等 startTimeoutMs（20s）才判定失败，这里探得更久一点，
+				// 保证"服务起来了但探测已经放弃"这种尴尬不会发生。
+				const deadline = Date.now() + PROBE_TIMEOUT_MS;
+				const tick = async () => {
+					if (cancelled) return;
+					attempt += 1;
 					try {
 						const response = await fetch(`${DEFAULT_ADMIN_URL}/api/stats`, { method: "GET" });
 						if (cancelled) return;
-						if (!response.ok) setWarn({ detail: `HTTP ${response.status}` });
+						if (response.ok) {
+							setStatus("ready");
+							setDetail("");
+							// 只有"之前探失败过"才需要重挂 iframe；一路顺利就别动它。
+							if (attempt > 1) setReloadKey((n) => n + 1);
+							return;
+						}
+						setDetail(`HTTP ${response.status}`);
 					} catch (error) {
 						if (cancelled) return;
-						setWarn({ detail: String(error?.message ?? error) });
+						setDetail(String(error?.message ?? error));
 					}
-				})();
-				return () => { cancelled = true; };
+					if (Date.now() >= deadline) {
+						setStatus("down");
+						return;
+					}
+					setStatus("probing");
+					timer = setTimeout(tick, PROBE_INTERVAL_MS);
+				};
+				tick();
+				return () => {
+					cancelled = true;
+					if (timer !== null) clearTimeout(timer);
+				};
 			}, []);
 			const children = [];
-			if (warn !== null) {
+			if (status !== "ready") {
 				children.push(react_jsx_runtime.jsxs("div", {
-					"data-dsh-bionic-warn": "service",
+					"data-dsh-bionic-warn": status,
 					style: {
-						flex: "0 0 auto", padding: "8px 12px", background: "#fff8e5",
-						borderBottom: "1px solid #f0d9a8", color: "#6b4e00",
+						flex: "0 0 auto", padding: "8px 12px",
+						background: status === "down" ? "#fff8e5" : "#f2f6ff",
+						borderBottom: "1px solid " + (status === "down" ? "#f0d9a8" : "#cfe0ff"),
+						color: status === "down" ? "#6b4e00" : "#1f3a68",
 						font: "12px/1.6 ui-sans-serif, system-ui, \"Segoe UI\", sans-serif"
 					},
-					children: [
-						react_jsx_runtime.jsx("strong", { children: tt("panel.downTitle") }),
-						` — ${tt("panel.downUrl")} ${DEFAULT_ADMIN_URL}（${tt("panel.downReason")}：${warn.detail}）。`,
-						` ${tt("panel.downLog")}`
-					]
+					children: status === "down"
+						? [
+							react_jsx_runtime.jsx("strong", { children: tt("panel.downTitle") }),
+							` — ${tt("panel.downUrl")} ${DEFAULT_ADMIN_URL}（${tt("panel.downReason")}：${detail}）。`,
+							` ${tt("panel.downLog")}`
+						]
+						: [
+							react_jsx_runtime.jsx("strong", { children: tt("panel.probing") }),
+							` — ${DEFAULT_ADMIN_URL}`
+						]
 				}));
 			}
 			children.push(react_jsx_runtime.jsx("iframe", {
+				key: reloadKey,
 				src: DEFAULT_ADMIN_URL,
 				title: tt("panel.title"),
 				style: { flex: "1 1 auto", width: "100%", border: "none", display: "block", minHeight: 0 },
@@ -190,7 +232,7 @@ window.__ModuleLoader__.load({
 			return react_jsx_runtime.jsx("div", {
 				className: "bionic-agent-panel-view",
 				"data-dsh-plugin": PANEL_ID,
-				"data-dsh-bionic-state": warn === null ? "ready" : "warn",
+				"data-dsh-bionic-state": status,
 				style: {
 					position: "absolute", inset: 0, border: "none", overflow: "hidden",
 					background: "#fff", display: "flex", flexDirection: "column"

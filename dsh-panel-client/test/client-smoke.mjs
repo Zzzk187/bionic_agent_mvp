@@ -30,10 +30,22 @@ const reactStub = {
 		if (reactStub.__store[index] === undefined) {
 			reactStub.__store[index] = typeof v === "function" ? v() : v;
 		}
-		const set = (next) => { reactStub.__store[index] = next; };
+		// setState 支持函数式更新（React 真实语义），不然 setX(n => n + 1) 会把函数本身存进去。
+		const set = (next) => {
+			reactStub.__store[index] = typeof next === "function" ? next(reactStub.__store[index]) : next;
+		};
 		return [reactStub.__store[index], set];
 	},
-	useEffect: (fn) => {
+	// useEffect 必须遵守"deps 没变就不重跑"这条语义。
+	// 桩若每次 render 都执行，effect 里的局部计数（重试次数）会被反复清零，
+	// 测出来的行为就和真实 React 不一样了 —— 之前就因此误判过自愈逻辑。
+	useEffect: (fn, deps) => {
+		const index = reactStub.__effectCursor++;
+		const prev = reactStub.__effectDeps[index];
+		const same = prev !== undefined && Array.isArray(deps) && deps.length === prev.length
+			&& deps.every((d, i) => d === prev[i]);
+		if (same) return;
+		reactStub.__effectDeps[index] = deps;
 		const cleanup = fn();
 		if (typeof cleanup === "function") reactStub.__cleanups.push(cleanup);
 	},
@@ -42,11 +54,21 @@ const reactStub = {
 	useSyncExternalStore: (sub, get) => get(),
 	__store: [],
 	__cursor: 0,
+	__effectCursor: 0,
+	__effectDeps: [],
 	__cleanups: [],
 	__fetched: [],
 	__serviceUp: true,
 	__beginRender() {
 		reactStub.__cursor = 0;
+		reactStub.__effectCursor = 0;
+	},
+	// 模拟"组件彻底卸载再挂载"：连同 effect 依赖一起清空。
+	__resetAll() {
+		reactStub.__store = [];
+		reactStub.__cursor = 0;
+		reactStub.__effectCursor = 0;
+		reactStub.__effectDeps = [];
 	}
 };
 const jsxStub = {
@@ -69,7 +91,11 @@ const fetchStub = async (url) => {
 };
 
 // 执行 client.js
-const sandbox = { window: fakeWindow, console, URL, Symbol, Object, Array, JSON, fetch: fetchStub };
+// 面板页会用 setTimeout 做重试退避，vm 的干净上下文里没有这些，要显式给。
+const sandbox = {
+	window: fakeWindow, console, URL, Symbol, Object, Array, JSON, Promise,
+	setTimeout, clearTimeout, Date, fetch: fetchStub
+};
 vm.createContext(sandbox);
 new vm.Script(clientSource, { filename: "client.js" }).runInContext(sandbox);
 
@@ -199,10 +225,12 @@ check("确实探测过 /api/stats",
 	reactStub.__fetched.some((u) => u.endsWith("/api/stats")),
 	JSON.stringify(reactStub.__fetched));
 
-// 第二轮：服务不在 -> iframe 仍然渲染（这是设计契约），另外多一条说明条
+// 第二轮：服务不在 -> iframe 仍然渲染（这是设计契约），顶部出现探测中的说明条。
+//
+// 注意别在这里等 PROBE_TIMEOUT_MS（30 秒）：那是给真实冷启动留的预算，测试里
+// 只需验证"第一次探测失败后进入 probing、并且还在重试"，就够了。
 reactStub.__serviceUp = false;
-reactStub.__store = [];
-reactStub.__cursor = 0;
+reactStub.__resetAll();
 reactStub.__fetched.length = 0;
 reactStub.__beginRender();
 page = mainReg.Component(face);
@@ -216,15 +244,34 @@ const pageText = JSON.stringify(nodes);
 check("服务不可用时 iframe 仍然渲染（不把面板判死）",
 	iframe?.type === "iframe" && /^http:\/\/127\.0\.0\.1:\d+/.test(String(iframe?.props?.src ?? "")),
 	`${iframe?.type} ${iframe?.props?.src}`);
-check("服务不可用时状态为 warn",
-	page?.props?.["data-dsh-bionic-state"] === "warn",
+check("服务不可用时进入 probing 而不是直接报死",
+	page?.props?.["data-dsh-bionic-state"] === "probing",
 	String(page?.props?.["data-dsh-bionic-state"]));
 check("服务不可用时出现说明条",
-	warnNode?.props?.["data-dsh-bionic-warn"] === "service",
+	warnNode?.props?.["data-dsh-bionic-warn"] === "probing",
 	String(warnNode?.props?.["data-dsh-bionic-warn"]));
-check("说明条带出服务地址与失败原因",
-	pageText.includes("8899") && pageText.includes("ECONNREFUSED"),
-	pageText.slice(0, 160));
+// probing 阶段的说明条只报"正在连接 + 地址"；失败详情留到 down 才展示，
+// 免得用户盯着每 800ms 变一次的报错看。
+check("探测中的说明条带出服务地址",
+	pageText.includes("8899") && pageText.includes("probing"),
+	pageText.slice(0, 120));
+
+// 第三轮：服务恢复 -> 应该自愈成 ready，并且 iframe 换 key 重新加载
+// 第三轮：服务恢复。**不能重置组件状态** —— 自愈逻辑依赖重试计数跨轮次累加，
+// 重置就变成一个全新挂载，永远测不到 attempt>1 那条分支。
+reactStub.__serviceUp = true;
+// 等下一次重试 tick（PROBE_INTERVAL_MS=800ms）落地。
+await new Promise((r) => setTimeout(r, 900));
+reactStub.__beginRender();
+page = mainReg.Component(face);
+nodes = flatten(page);
+iframe = nodes.find((n) => n?.type === "iframe");
+check("服务恢复后自愈为 ready",
+	page?.props?.["data-dsh-bionic-state"] === "ready",
+	String(page?.props?.["data-dsh-bionic-state"]));
+check("自愈时 iframe 换了 key 以真正重新加载",
+	typeof iframe?.props?.key === "number" && iframe.props.key > 0,
+	String(iframe?.props?.key));
 
 if (failed) {
 	console.error(`FAIL: ${failed} 项渲染检查未通过`);
