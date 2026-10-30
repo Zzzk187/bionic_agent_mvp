@@ -85,6 +85,73 @@ function isListening(port, timeoutMs = 800) {
 	});
 }
 
+/**
+ * 端口上那个东西到底是不是我们。
+ *
+ * 只看「端口有人在听」是不够的：8899 是常见端口，用户的别的服务、另一个
+ * Python 进程、甚至一次失败的旧启动都可能占着它。把它们当成自己的管理服务
+ * 复用，表现就是面板打开后是别人的页面 / 一片乱码，而且没有任何报错。
+ *
+ * 判据用管理面板自己的接口：GET /api/stats 必须返回 {"ok":true,"data":{...}}
+ * 且 data 里有 memories_total —— 这是本服务独有的形状。
+ */
+function identifyAdmin(port, timeoutMs = 1500) {
+	return new Promise((done) => {
+		let settled = false;
+		const finish = (result) => {
+			if (settled) return;
+			settled = true;
+			done(result);
+		};
+		const req = httpRequest(
+			{
+				host: "127.0.0.1",
+				port,
+				path: "/api/stats",
+				method: "GET",
+				headers: { host: `127.0.0.1:${port}`, accept: "application/json" },
+				timeout: timeoutMs
+			},
+			(res) => {
+				const chunks = [];
+				res.on("data", (c) => chunks.push(c));
+				res.on("end", () => {
+					const text = Buffer.concat(chunks).toString("utf8");
+					if (res.statusCode !== 200) {
+						finish({ ours: false, reason: `HTTP ${res.statusCode}` });
+						return;
+					}
+					let body;
+					try {
+						body = JSON.parse(text);
+					} catch {
+						finish({ ours: false, reason: "返回的不是 JSON（多半是别的服务）" });
+						return;
+					}
+					const ours = body?.ok === true && body?.data !== undefined && "memories_total" in body.data;
+					finish({ ours, reason: ours ? "是 bionic 管理服务" : "JSON 形状不匹配（不是本服务）" });
+				});
+			}
+		);
+		req.on("timeout", () => {
+			req.destroy();
+			finish({ ours: false, reason: "探测超时" });
+		});
+		req.on("error", (e) => finish({ ours: false, reason: `连不上：${e?.message ?? e}` }));
+		req.end();
+	});
+}
+
+/** 从 start 往后找一个没人听的端口；找不到返回 start。 */
+async function pickFreePort(start, tries = 10) {
+	for (let i = 0; i < tries; i += 1) {
+		const port = start + i;
+		if (port > 65535) break;
+		if (!(await isListening(port))) return port;
+	}
+	return start;
+}
+
 /** 轮询等端口起来，最多等 timeoutMs。 */
 async function waitUntilListening(port, timeoutMs) {
 	const deadline = Date.now() + timeoutMs;
@@ -185,8 +252,12 @@ function launchAdmin(config, projectDir, port) {
  */
 export function apply(ctx, config = {}) {
 	const merged = { ...DEFAULTS, ...config };
-	const adminUrl = String(merged.adminUrl ?? DEFAULTS.adminUrl);
-	const port = portOf(adminUrl, merged.port);
+	const configuredUrl = String(merged.adminUrl ?? DEFAULTS.adminUrl);
+	const configuredPort = portOf(configuredUrl, merged.port);
+	// 实际在用的地址。端口被别的程序占着时会改成旁边的端口，
+	// 所以反代与探测都必须读这个可变值，而不是上面那个配置值。
+	let adminUrl = configuredUrl;
+	let port = configuredPort;
 	let launched = null;
 	let disposed = false;
 
@@ -202,9 +273,20 @@ export function apply(ctx, config = {}) {
 	// 缺席，服务拉起的逻辑照常跑。
 	const proxyMountPath = String(merged.mountPath ?? "").trim();
 	let disposeProxy = null;
+	let proxyFiber = null;
 	if (proxyMountPath !== "") {
-		ctx.inject(["webServer"], (inner) => {
-			disposeProxy = mountProxy(inner, proxyMountPath, adminUrl) ?? null;
+		// ctx.inject 返回的是一个子 fiber；路由挂在它上面，所以收的时候要
+		// 显式 dispose 这个 fiber —— 只调 register 返回的 disposer 在没有
+		// 「父 fiber 一起销毁」这条路径时（比如单测直接调 apply 的返回值）
+		// 会把路由留在真 webServer 里。
+		proxyFiber = ctx.inject(["webServer"], (inner) => {
+			// 这个回调可能被触发不止一次（服务重新 provide 时）。只挂一次：
+			// 第二次注册会被 webServer 判为 duplicate 而失败，那条失败路径
+			// 返回 undefined，若直接赋给 disposeProxy 就会把第一次的有效
+			// disposer 覆盖掉，最终 dispose 时摘不掉路由。
+			if (disposeProxy === null) {
+				disposeProxy = mountProxy(inner, proxyMountPath, () => adminUrl) ?? null;
+			}
 			return () => {
 				disposeProxy?.();
 				disposeProxy = null;
@@ -220,27 +302,41 @@ export function apply(ctx, config = {}) {
 		const projectDir = resolve(String(merged.projectDir ?? DEFAULTS.projectDir));
 
 		void (async () => {
-			// 已有实例在跑 → 复用（可能是用户自己起的）。
+			// 端口有人听时，先问清楚"是不是我们自己"。
+			// 直接复用会在别的服务占着 8899 时把面板接到别人页面上——
+			// 现象是打开后一片乱码，且没有任何报错，最难查。
 			if (await isListening(port)) {
-				ctx.logger?.info?.(`[bionic-panel] ${adminUrl} 已在运行，复用现有服务`);
-				bootTrace(ctx, `复用已有服务 ${adminUrl}`);
-				return;
+				const who = await identifyAdmin(port);
+				if (who.ours) {
+					bootTrace(ctx, `${adminUrl} 已在运行，复用现有服务`);
+					return;
+				}
+				const free = await pickFreePort(port + 1);
+				bootTrace(ctx, `端口 ${port} 被别的程序占着（${who.reason}），改用 ${free}`, "warn");
+				port = free;
+				adminUrl = `http://127.0.0.1:${free}`;
 			}
 			launched = launchAdmin(merged, projectDir, port);
 			if (launched.error !== undefined) {
-				ctx.logger?.warn?.(`[bionic-panel] 启动管理服务失败：${launched.error?.message ?? launched.error}`);
-				bootTrace(ctx, `启动失败：${launched.error?.message ?? launched.error}`);
+				bootTrace(ctx, `启动管理服务失败：${launched.error?.message ?? launched.error}`, "warn");
 				return;
 			}
 			const up = await waitUntilListening(port, merged.startTimeoutMs);
 			if (up) {
-				ctx.logger?.info?.(`[bionic-panel] 管理服务已就绪：${adminUrl}`);
-				bootTrace(ctx, `管理服务已就绪 ${adminUrl}（${pythonHint(launched)}）`);
+				// 端口通了还要认一下形状：万一刚起来的那个进程被别人抢了先，
+				// 或者 python 起来的是个错误的东西，这里能当场发现。
+				const who = await identifyAdmin(port);
+				if (who.ours) {
+					bootTrace(ctx, `管理服务已就绪 ${adminUrl}（${pythonHint(launched)}）`);
+				} else {
+					bootTrace(ctx, `${adminUrl} 有响应但不是管理服务（${who.reason}），面板会显示空白`, "warn");
+				}
 			} else if (!disposed) {
-				ctx.logger?.warn?.(
-					`[bionic-panel] 管理服务未能就绪（${pythonHint(launched)}），面板会显示空白；日志见 ${launched.logPath ?? "data/admin_ui.log"}`
+				bootTrace(
+					ctx,
+					`管理服务未能就绪（${pythonHint(launched)}），面板会显示空白；日志见 ${launched.logPath ?? "data/admin_ui.log"}`,
+					"warn"
 				);
-				bootTrace(ctx, `管理服务未能就绪（${pythonHint(launched)}），见 ${launched.logPath ?? "data/admin_ui.log"}`);
 			}
 		})();
 
@@ -257,8 +353,15 @@ export function apply(ctx, config = {}) {
 		disposed = true;
 		launched?.kill();
 		launched = null;
+		// 先收路由再收 fiber：disposeProxy 是精确的，fiber 是兜底。
 		disposeProxy?.();
 		disposeProxy = null;
+		try {
+			proxyFiber?.dispose?.();
+		} catch {
+			/* 已经收掉了 */
+		}
+		proxyFiber = null;
 	};
 }
 
@@ -269,9 +372,12 @@ export function apply(ctx, config = {}) {
  * 测试夹具会设 BIONIC_PANEL_NO_TRACE=1 跳过落盘 —— 否则 test/ 里跑的假宿主
  * 也会往这份日志里写，重启后就没法用「有没有痕迹」判断 DSH 到底加载没加载了。
  */
-function bootTrace(ctx, message) {
+function bootTrace(ctx, message, level = "info") {
 	try {
-		ctx.logger?.info?.(`[bionic-panel] ${message}`);
+		// 日志只走这一条路：调用处不再单独 logger.info/warn，
+		// 否则「端口被占」这类事会在终端里打两遍。
+		const log = ctx.logger?.[level] ?? ctx.logger?.info;
+		log?.(`[bionic-panel] ${message}`);
 		if (process.env.BIONIC_PANEL_NO_TRACE === "1") return;
 		const line = `${new Date().toISOString()} pid=${process.pid} ${message}\n`;
 		const dir = resolve(String(DEFAULTS.projectDir), "data");
@@ -295,7 +401,7 @@ function pythonHint(launched) {
  *
  * 返回 disposer；webServer 缺失（非 Web 宿主）时返回 undefined，不报错。
  */
-function mountProxy(ctx, mountPath, adminUrl) {
+function mountProxy(ctx, mountPath, adminUrlOf) {
 	const prefix = String(mountPath ?? "").replace(/\/+$/, "");
 	if (!prefix.startsWith("/")) return undefined;
 	const webServer = ctx.webServer;
@@ -303,8 +409,6 @@ function mountProxy(ctx, mountPath, adminUrl) {
 		bootTrace(ctx, `宿主没有 webServer，跳过同源挂载 ${prefix}（面板仍可用跨源地址打开）`);
 		return undefined;
 	}
-	const base = new URL(adminUrl);
-	const origin = base.origin;
 
 	// 同源反代让面板和 DSH 共用一个源，也就意味着**任何能打到 DSH 端口的网页**
 	// 都能对我们的写接口发请求（读响应被同源策略挡住，但 POST/DELETE 会被执行）。
@@ -349,6 +453,24 @@ function mountProxy(ctx, mountPath, adminUrl) {
 
 	const handler = (req, res) => {
 		if (!guardWrite(req, res)) return;
+		// 地址每次请求现取：端口可能因为被占用而改到别的号上，
+		// 而这条路由是启动时就注册好的，不能把地址固化成注册那一刻的值。
+		const adminUrl = adminUrlOf();
+		let base;
+		let origin;
+		try {
+			base = new URL(adminUrl);
+			origin = base.origin;
+		} catch (error) {
+			res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
+			res.end(
+				JSON.stringify({
+					ok: false,
+					message: `管理服务地址不合法（${adminUrl}）：${error?.message ?? error}`
+				})
+			);
+			return;
+		}
 		const incoming = new URL(req.url ?? "/", "http://dsh.internal");
 		let rest = incoming.pathname.slice(prefix.length);
 		if (rest === "" || rest === "/") rest = "/";
@@ -392,7 +514,17 @@ function mountProxy(ctx, mountPath, adminUrl) {
 
 	try {
 		const dispose = webServer.register({ kind: "prefix", path: prefix, handler });
-		bootTrace(ctx, `已挂同源路由 ${prefix} -> ${origin}`);
+		// 注意：这里不能引用 handler 内部的 base/origin（它们在 handler 作用域里）。
+		// 之前写成 `${origin}` 会在 register 成功之后抛 ReferenceError，
+		// 被下面的 catch 吞掉并返回 undefined —— 路由挂上了、disposer 却丢了，
+		// 现象就是「功能正常但卸载后路由摘不掉」，日志还会误报挂载失败。
+		let shown = adminUrlOf();
+		try {
+			shown = new URL(shown).origin;
+		} catch {
+			/* 地址不合法时原样打出，交给 handler 报 502 */
+		}
+		bootTrace(ctx, `已挂同源路由 ${prefix} -> ${shown}`);
 		return dispose;
 	} catch (error) {
 		// 重复注册（比如两个 DSH 实例共用一个 profile）会让宿主抛错 —— 不能因此

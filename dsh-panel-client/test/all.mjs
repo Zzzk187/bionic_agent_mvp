@@ -39,6 +39,12 @@ const STEPS = [
 		optional: true
 	},
 	{
+		name: "端口被占用时换端口",
+		script: "test/port-conflict.mjs",
+		// 要起真 python 服务；环境缺 python 时 SKIP
+		optional: true
+	},
+	{
 		name: "真宿主 WebServer 反代",
 		script: "test/host-webserver.mjs",
 		// 要宿主自己的 cordis + dsh-host-webserver；换机器没有就 SKIP
