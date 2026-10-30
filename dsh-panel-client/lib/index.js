@@ -382,19 +382,24 @@ export function apply(ctx, config = {}) {
  * 也会往这份日志里写，重启后就没法用「有没有痕迹」判断 DSH 到底加载没加载了。
  */
 function bootTrace(ctx, message, level = "info") {
+	// 落盘与打终端日志各自独立 try。落盘是自证用的，不能因为日志管道
+	// 在启动早期还没就绪就一起丢掉——那会让 panel-boot.log 神秘消失，
+	// 排查时被误导（以为插件没加载，其实只是日志抛错）。
+	if (process.env.BIONIC_PANEL_NO_TRACE !== "1") {
+		try {
+			const traceLine = `${new Date().toISOString()} pid=${process.pid} ${message}` + String.fromCharCode(10);
+			const traceDir = resolve(String(traceProjectDir ?? DEFAULTS.projectDir), "data");
+			if (!existsSync(traceDir)) mkdirSync(traceDir, { recursive: true });
+			appendFileSync(resolve(traceDir, "panel-boot.log"), traceLine, "utf8");
+		} catch {
+			/* 痕迹写不了也不影响主流程 */
+		}
+	}
 	try {
 		// 日志只走这一条路：调用处不再单独 logger.info/warn，
 		// 否则「端口被占」这类事会在终端里打两遍。
 		const log = ctx.logger?.[level] ?? ctx.logger?.info;
 		log?.(`[bionic-panel] ${message}`);
-		if (process.env.BIONIC_PANEL_NO_TRACE === "1") return;
-		const line = `${new Date().toISOString()} pid=${process.pid} ${message}\n`;
-		// 用运行时解析出的 projectDir（config 里可能改过），而不是写死默认值 ——
-		// 否则 config 改了 projectDir，痕迹和 admin_ui.log 会落到两个不同目录，
-		// 排查时互相找不到。
-		const dir = resolve(String(traceProjectDir ?? DEFAULTS.projectDir), "data");
-		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-		appendFileSync(resolve(dir, "panel-boot.log"), line, "utf8");
 	} catch {
 		/* 痕迹写不了也不影响主流程 */
 	}
