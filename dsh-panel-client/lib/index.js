@@ -429,9 +429,31 @@ function mountProxy(ctx, mountPath, adminUrlOf) {
 	// 只 fence 写方法而不是全部：GET 没有跨站后果（响应读不到），而把 GET 也
 	// 卡在 cookie 判定上，会在 authority 变化的边缘情况下把能用的面板判死。
 	// fence 自身抛错不拦请求 —— 安全组件故障不该让本地面板不可用。
+	// 统一的拒绝应答：三种拒绝理由（直接打开 / 跨站 / 未登录）共用一种形状，
+	// 前端能像处理普通接口错误那样显示出来，而不是拿到一个裸状态码。
+	const reject = (res, status, message, hint) => {
+		res.writeHead(status, {
+			"content-type": "application/json; charset=utf-8",
+			"cache-control": "no-store"
+		});
+		res.end(JSON.stringify({ ok: false, message, hint }));
+	};
+
 	const guardWrite = (req, res) => {
 		const method = String(req.method ?? "GET").toUpperCase();
 		if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
+		// 先做一个与鉴权无关的强判据：面板是被 DSH 窗口以 iframe 嵌进来的，
+		// 还是有人直接拿浏览器打开 /bionic-panel/。
+		//  - 嵌进来时：Sec-Fetch-Dest: iframe，且 Referer 缺省或指向 DSH 自己
+		//  - 直接打开时：Sec-Fetch-Dest: document
+		// 直接打开的情况一律拒绝写入 —— 即使他恰好带着 DSH 的 cookie
+		// （比如用户自己在同一个浏览器里另开了一个标签页），也不该能改库。
+		const dest = String(req.headers?.["sec-fetch-dest"] ?? "").toLowerCase();
+		if (dest === "document") {
+			reject(res, 403, "这个地址只能由 DSH 窗口内嵌使用，不接受直接打开后的写入",
+				"请从 DSH 侧边栏的「记忆/任务」面板里操作");
+			return false;
+		}
 		let connection;
 		try {
 			connection = ctx.get?.("connection");
@@ -446,19 +468,13 @@ function mountProxy(ctx, mountPath, adminUrlOf) {
 			return true;
 		}
 		if (rejection === undefined) return true;
-		res.writeHead(rejection, {
-			"content-type": "application/json; charset=utf-8",
-			"cache-control": "no-store"
-		});
-		res.end(
-			JSON.stringify({
-				ok: false,
-				message:
-					rejection === 403
-						? "请求被拒绝：来源不是 DSH 页面（防跨站写入）"
-						: "未登录 DSH，不能写管理面板（请从 DSH 窗口里操作）",
-				hint: "面板读操作不受影响；写操作需从 DSH 自己的窗口发起"
-			})
+		reject(
+			res,
+			rejection,
+			rejection === 403
+				? "请求被拒绝：来源不是 DSH 页面（防跨站写入）"
+				: "未登录 DSH，不能写管理面板（请从 DSH 窗口里操作）",
+			"面板读操作不受影响；写操作需从 DSH 自己的窗口发起"
 		);
 		return false;
 	};

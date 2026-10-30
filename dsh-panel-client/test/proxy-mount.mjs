@@ -44,18 +44,21 @@ function get(pathname, port) {
 	});
 }
 
-function send(method, pathname, port, body) {
+function send(method, pathname, port, body, extraHeaders) {
 	return new Promise((done) => {
 		const payload = body === undefined ? undefined : Buffer.from(body, "utf8");
+		const headers = { ...(extraHeaders ?? {}) };
+		if (payload) {
+			headers["content-type"] = "application/json";
+			headers["content-length"] = payload.length;
+		}
 		const req = http.request(
 			{
 				host: "127.0.0.1",
 				port,
 				path: pathname,
 				method,
-				headers: payload
-					? { "content-type": "application/json", "content-length": payload.length }
-					: undefined
+				headers: Object.keys(headers).length > 0 ? headers : undefined
 			},
 			(res) => {
 				const chunks = [];
@@ -221,9 +224,35 @@ clock: {
 	const survived = await get("/bionic-panel/api/stats", dshPort);
 	check("fence 抛错时请求仍放行", survived.status === 200, `status=${survived.status}`);
 
-	// 4) 放行时写方法要真的到达上游
+	// 4) 直接拿浏览器打开面板（Sec-Fetch-Dest: document）时，即使 fence 放行，
+	//    也必须拒绝写入 —— 否则用户在一个标签页里开着 DSH 时，另开一个标签页
+	//    就能绕过 iframe 语义改库。这条判据与鉴权无关，是纯粹的上下文检查。
 	ctx.__connection = { requestRejection: () => undefined };
-	const allowed = await send("POST", "/bionic-panel/api/memories", dshPort, '{"content":"反代写入链路自检","category":"test"}');
+	const directOpen = await send(
+		"POST",
+		"/bionic-panel/api/memories",
+		dshPort,
+		'{"content":"直接打开页面的写入（应被拦）","category":"test"}',
+		{ "sec-fetch-dest": "document" }
+	);
+	let directJson = null;
+	try {
+		directJson = JSON.parse(directOpen.body.toString());
+	} catch {}
+	check(
+		"直接打开页面（非 iframe）时写入被拒（403）",
+		directOpen.status === 403 && directJson?.ok === false,
+		`status=${directOpen.status} msg=${directJson?.message ?? ""}`
+	);
+
+	// 5) 放行时写方法要真的到达上游（模拟宿主 iframe：sec-fetch-dest: iframe）
+	const allowed = await send(
+		"POST",
+		"/bionic-panel/api/memories",
+		dshPort,
+		'{"content":"反代写入链路自检","category":"test"}',
+		{ "sec-fetch-dest": "iframe" }
+	);
 	check("放行时写方法到达上游", allowed.status >= 200 && allowed.status < 300, `status=${allowed.status}`);
 	if (allowed.status >= 200 && allowed.status < 300) {
 		try {
