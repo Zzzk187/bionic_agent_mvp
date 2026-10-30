@@ -30,12 +30,24 @@ window.__ModuleLoader__.load({
 		const zh = {
 			"entry.label": "记忆/任务",
 			"entry.tooltip": "bionic-agent 记忆与任务管理面板",
-			"panel.title": "bionic-agent 管理面板"
+			"panel.title": "bionic-agent 管理面板",
+			"panel.probing": "正在连接管理服务…",
+			"panel.downTitle": "管理服务没有响应",
+			"panel.downHint": "插件会在 DSH 启动时自动拉起本机管理服务；没起来通常是下面几种原因，处理完点这个面板重新打开即可：",
+			"panel.downUrl": "服务地址",
+			"panel.downReason": "具体原因",
+			"panel.downLog": "若 Python 或依赖缺失，请在 bionic-agent 项目目录执行 pip install -r requirements.txt；日志见 data/admin_ui.log"
 		};
 		const en = {
 			"entry.label": "Memory / Tasks",
 			"entry.tooltip": "bionic-agent memory & task management panel",
-			"panel.title": "bionic-agent admin panel"
+			"panel.title": "bionic-agent admin panel",
+			"panel.probing": "Connecting to the admin service…",
+			"panel.downTitle": "The admin service is not responding",
+			"panel.downHint": "The plugin starts the local admin service when DSH boots. When it is down, one of these is usually the cause; fix it and reopen this panel:",
+			"panel.downUrl": "Service",
+			"panel.downReason": "Reason",
+			"panel.downLog": "If Python or its dependencies are missing, run pip install -r requirements.txt in the bionic-agent project; the log is data/admin_ui.log"
 		};
 
 		let runtimeTranslate = null;
@@ -129,17 +141,61 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// 面板页：iframe 里是 8899 的 FastAPI 管理界面。
+		//
+		// 设计取舍（重要）：iframe 一律渲染，探测只用来叠加一条说明条。
+		// 反过来做（探不到就不渲染 iframe）看着更"严谨"，实际更脆：探测走的是
+		// 跨源 fetch，只要 CORS/拦截/版本有任何一处不对，明明能用的面板就会被
+		// 自己判死、整个变成错误页。所以让 iframe 自己加载，探测失败只是在顶部
+		// 加一条可读的原因 —— 最坏情况退化成"能用的面板 + 一条多余提示"，
+		// 而不是"完全打不开"。
 		function BionicPanelPage() {
+			const [warn, setWarn] = react.useState(null);
+			react.useEffect(() => {
+				let cancelled = false;
+				(async () => {
+					try {
+						const response = await fetch(`${DEFAULT_ADMIN_URL}/api/stats`, { method: "GET" });
+						if (cancelled) return;
+						if (!response.ok) setWarn({ detail: `HTTP ${response.status}` });
+					} catch (error) {
+						if (cancelled) return;
+						setWarn({ detail: String(error?.message ?? error) });
+					}
+				})();
+				return () => { cancelled = true; };
+			}, []);
+			const children = [];
+			if (warn !== null) {
+				children.push(react_jsx_runtime.jsxs("div", {
+					"data-dsh-bionic-warn": "service",
+					style: {
+						flex: "0 0 auto", padding: "8px 12px", background: "#fff8e5",
+						borderBottom: "1px solid #f0d9a8", color: "#6b4e00",
+						font: "12px/1.6 ui-sans-serif, system-ui, \"Segoe UI\", sans-serif"
+					},
+					children: [
+						react_jsx_runtime.jsx("strong", { children: tt("panel.downTitle") }),
+						` — ${tt("panel.downUrl")} ${DEFAULT_ADMIN_URL}（${tt("panel.downReason")}：${warn.detail}）。`,
+						` ${tt("panel.downLog")}`
+					]
+				}));
+			}
+			children.push(react_jsx_runtime.jsx("iframe", {
+				src: DEFAULT_ADMIN_URL,
+				title: tt("panel.title"),
+				style: { flex: "1 1 auto", width: "100%", border: "none", display: "block", minHeight: 0 },
+				allow: "clipboard-read; clipboard-write"
+			}));
 			return react_jsx_runtime.jsx("div", {
 				className: "bionic-agent-panel-view",
 				"data-dsh-plugin": PANEL_ID,
-				style: { position: "absolute", inset: 0, border: "none", overflow: "hidden", background: "#fff" },
-				children: react_jsx_runtime.jsx("iframe", {
-					src: DEFAULT_ADMIN_URL,
-					title: tt("panel.title"),
-					style: { width: "100%", height: "100%", border: "none", display: "block" },
-					allow: "clipboard-read; clipboard-write"
-				})
+				"data-dsh-bionic-state": warn === null ? "ready" : "warn",
+				style: {
+					position: "absolute", inset: 0, border: "none", overflow: "hidden",
+					background: "#fff", display: "flex", flexDirection: "column"
+				},
+				children
 			});
 		}
 		//#endregion

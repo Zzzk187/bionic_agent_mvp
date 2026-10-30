@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
 # 复用既有后端（这些函数不依赖 MCP 协议，直接操作 SQLite）。
@@ -35,6 +36,21 @@ from app import embeddings as emb  # noqa: E402
 HTML_PATH = Path(__file__).resolve().with_name("admin_ui.html")
 
 app = FastAPI(title="Bionic Agent 管理面板", version="0.1.0")
+
+# 允许本机页面跨端口访问。
+#
+# 面板有两种用法：直接在浏览器打开 8899，或者被 DeepSeek Harness 的 client 插件
+# 用 iframe 嵌进去（宿主端口随机，如 59647）。后者是同机不同端口，属于跨源——
+# 浏览器会拦掉不带 CORS 头的 fetch/XHR。这个服务只监听 127.0.0.1、只给本机用，
+# 所以放行本机来源没有额外风险；限死 localhost/127.0.0.1 而不放开 *，是为了
+# 万一将来改了监听地址也不至于变成任意网站都能读。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
