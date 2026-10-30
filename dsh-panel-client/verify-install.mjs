@@ -229,6 +229,9 @@ if (listening) {
 const bootLog = resolve(PKG_DIR, "..", "data", "panel-boot.log");
 let bootOk = false;
 let bootDetail = "";
+// 当前正在运行的管理服务实例标识（来自 /api/stats 的 boot 字段）。
+// 第 9 项靠它把「上一批进程留下的旧报到」和「这次真的被嵌进来了」区分开。
+let liveBootId = null;
 
 // (a) 日志痕迹
 if (existsSync(bootLog)) {
@@ -273,6 +276,19 @@ if (bootOk) {
 // panel-client.log 由面板页面里的 fetch('/api/ping') 写。它和 panel-boot.log 是
 // 两层独立的信号：前者证明浏览器真的把 iframe 跑起来了，后者只证明 Node 侧加载了。
 // 两个都空 = 没重启；只有 boot 有 = 卡在浏览器端；两个都有 = 通路全通。
+
+// 先取当前服务实例的 boot id：痕迹文件是跨进程累积的，不比对就会把
+// 「上一批进程里点开过面板」误当成本次证据（这坑自己踩过）。
+try {
+	const res = await fetch(`${adminUrl}/api/stats`, { signal: AbortSignal.timeout(3000) });
+	const body = await res.json();
+	if (res.ok && body?.ok === true && typeof body?.data?.boot === "string") {
+		liveBootId = body.data.boot;
+	}
+} catch {
+	/* 服务没起来时 liveBootId 保持 null，第 9 项退化为"只看有没有宿主报到" */
+}
+
 const clientLog = resolve(PKG_DIR, "..", "data", "panel-client.log");
 if (existsSync(clientLog)) {
 	const lines = readFileSync(clientLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
@@ -289,12 +305,23 @@ if (existsSync(clientLog)) {
 		try { ua = String(JSON.parse(line).user_agent || ""); } catch { return false; }
 		return /dsh-desktop|deepseek-ai\/dsh|DeepSeekHarness/i.test(ua);
 	});
-	if (hosted.length > 0) {
+	// 排除"上一批进程留下的旧报到"：
+	// 痕迹文件是跨进程追加的，昨天点开过面板也会留一条宿主 iframe 记录。
+	// 若当前服务实例（/api/stats 的 boot）已经能取到，就只认同一 boot 的报到，
+	// 否则「没重启过也可能显示 PASS」—— 这正是我之前被误导的地方。
+	const currentBoot = liveBootId;
+	const fresh = currentBoot === null ? hosted : hosted.filter((line) => {
+		try { return JSON.parse(line).boot === currentBoot; } catch { return false; }
+	});
+	if (fresh.length > 0) {
 		check("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
 			true,
-			`共 ${lines.length} 条，其中来自宿主 iframe ${hosted.length} 条`);
+			`当前服务实例 ${currentBoot ?? "(未知)"} 收到 ${fresh.length} 条宿主报到`);
 		console.log("  最近几条宿主报到：");
-		for (const line of hosted.slice(-3)) console.log("    " + line);
+		for (const line of fresh.slice(-3)) console.log("    " + line);
+	} else if (hosted.length > 0 && currentBoot !== null) {
+		pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
+			`有 ${hosted.length} 条宿主报到，但都属于更早的服务实例；当前实例 ${currentBoot} 还没收到 —— 说明重启后你还没点开过侧边栏图标`);
 	} else {
 		// 有记录但没有一条来自宿主 iframe：说明还没被嵌进去过（直开面板/脚本探测都不算）。
 		// 这和"没有文件"是同一件事，只是多了一批噪声记录，同样按待确认处理。

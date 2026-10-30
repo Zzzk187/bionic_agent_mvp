@@ -162,8 +162,12 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 - `panel-boot.log`：宿主半 `apply()` 一被调用就落一行，证明 Node 侧加载了。
 - `panel-client.log`：面板页面在 iframe 里跑起来后 `fetch('/api/ping')` 报到，
   证明浏览器侧真的渲染了。脚本探测和直接打开 8899 都不算，只认宿主 iframe
-  （`referer` 带 DSH 端口的那种）。
+  （UA 带 `@deepseek-ai/dsh-desktop`）。
 - 两份日志都会写进项目 `data/` 目录，已在 `.gitignore` 里。
+- **报到要属于「当前这个服务实例」才算数**：`/api/ping` 每行带一个 `boot` 标识
+  （`<pid>-<随机>`，每次启动都不同），`/api/stats` 也返回同一个值。自检拿当前实例的
+  `boot` 去比对，上一批 DSH 留下的旧报到会被判为 `[WAIT]` 而不是 `[PASS]` —— 否则
+  "我重启了但没点开面板"会显示成"浏览器端已经通了"（这个假信号踩过）。
 - **跑完自检若这两项显示 `[PASS]`，但你还没重启过 DSH，那是假信号**——多半是有人
   手动起了服务或用脚本代理过。先删掉 `data/panel-boot.log`、`data/panel-client.log`
   再跑一次，两项应回到 `[WAIT]`。

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +37,14 @@ from app import memory_lifecycle as life  # noqa: E402
 from app import embeddings as emb  # noqa: E402
 
 HTML_PATH = Path(__file__).resolve().with_name("admin_ui.html")
+
+# 本次进程的实例标识：每次启动都不同。
+#
+# 存在的理由（踩过一次）：验痕文件是按"行"追加的，跨进程累积。上一批 DSH 里
+# 留下的 iframe 报到会被下一次自检当成本次的证据 —— 明明还没点开面板，自检
+# 却报「浏览器半跑起来了」。带上 boot 之后，自检只认「和当前服务同一实例」的
+# 报到，重启后的旧记录自动失效。
+BOOT_ID = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
 @asynccontextmanager
@@ -378,7 +388,7 @@ def api_stats():
         events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
     return _ok({"memories_total": total, "memories_active": active,
                 "memories_archived": archived, "tasks": tasks,
-                "links": links, "events": events})
+                "links": links, "events": events, "boot": BOOT_ID})
 
 
 @app.get("/api/ping")
@@ -393,6 +403,7 @@ def api_ping(request: Request):
     from datetime import datetime, timezone
     record = {
         "at": datetime.now(timezone.utc).isoformat(),
+        "boot": BOOT_ID,
         "referer": request.headers.get("referer", ""),
         "origin": request.headers.get("origin", ""),
         "user_agent": request.headers.get("user-agent", "")[:120],
