@@ -407,6 +407,10 @@ def api_ping(request: Request):
         "referer": request.headers.get("referer", ""),
         "origin": request.headers.get("origin", ""),
         "user_agent": request.headers.get("user-agent", "")[:120],
+        # Sec-Fetch-Dest 是浏览器自己加的、页面脚本改不了：iframe 内嵌是 "iframe"，
+        # 直接打开页面是 "document"。有了它，「宿主真的把面板嵌进去了」和
+        # 「有人拿浏览器直接开了这个地址」就不会再混在一起。
+        "dest": request.headers.get("sec-fetch-dest", ""),
     }
     try:
         log_path = Path(__file__).resolve().parent.parent / "data" / "panel-client.log"

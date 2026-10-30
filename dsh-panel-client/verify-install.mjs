@@ -317,11 +317,20 @@ if (existsSync(clientLog)) {
 	// 最可靠的判据是 UA：DSH 的 Electron 窗口会带 `@deepseek-ai/dsh-desktop/<ver>`。
 	// 不再依赖 referer —— 实测宿主 iframe 里发起的 fetch 的 referer 是空串
 	// （页面声明了 no-referrer 之类），按 referer 判定会把真实报到误判成噪声。
+	//
+	// 再加一道 Sec-Fetch-Dest：它是浏览器自己加的、页面脚本改不了。
+	// iframe 内嵌 = "iframe"，直接打开页面 = "document"。
+	// 只有新版本面板会记这个字段；老记录没有 dest 时退回只看 UA，
+	// 以免把历史痕迹一次性判成噪声。
 	const hosted = lines.filter((line) => {
 		if (line.includes("curl/")) return false;
-		let ua = "";
-		try { ua = String(JSON.parse(line).user_agent || ""); } catch { return false; }
-		return /dsh-desktop|deepseek-ai\/dsh|DeepSeekHarness/i.test(ua);
+		let record;
+		try { record = JSON.parse(line); } catch { return false; }
+		const ua = String(record.user_agent || "");
+		if (!/dsh-desktop|deepseek-ai\/dsh|DeepSeekHarness/i.test(ua)) return false;
+		const dest = String(record.dest ?? "");
+		// dest 为空 = 旧版本记的，保留兼容；有值就必须是 iframe
+		return dest === "" || dest === "iframe";
 	});
 	// 排除"上一批进程留下的旧报到"：
 	// 痕迹文件是跨进程追加的，昨天点开过面板也会留一条宿主 iframe 记录。
