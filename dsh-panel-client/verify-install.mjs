@@ -278,13 +278,16 @@ if (existsSync(clientLog)) {
 	const lines = readFileSync(clientLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
 	// 只认「被宿主嵌进来的」那一条，其余都不算证据：
 	//  - curl / 脚本探测：user-agent 带 curl/
-	//  - 我或用户直接在浏览器打开 8899：referer 就是 8899 自己
-	// 宿主 iframe 的 referer 一定带 DSH 的端口（如 59647），不含 :8899。
+	//  - 我或用户直接用外部浏览器打开 8899：UA 是普通浏览器，没有 DSH 标识
+	//
+	// 最可靠的判据是 UA：DSH 的 Electron 窗口会带 `@deepseek-ai/dsh-desktop/<ver>`。
+	// 不再依赖 referer —— 实测宿主 iframe 里发起的 fetch 的 referer 是空串
+	// （页面声明了 no-referrer 之类），按 referer 判定会把真实报到误判成噪声。
 	const hosted = lines.filter((line) => {
 		if (line.includes("curl/")) return false;
-		let referer = "";
-		try { referer = String(JSON.parse(line).referer || ""); } catch { return false; }
-		return referer !== "" && !referer.includes(":8899");
+		let ua = "";
+		try { ua = String(JSON.parse(line).user_agent || ""); } catch { return false; }
+		return /dsh-desktop|deepseek-ai\/dsh|DeepSeekHarness/i.test(ua);
 	});
 	if (hosted.length > 0) {
 		check("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
