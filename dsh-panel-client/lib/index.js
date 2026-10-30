@@ -53,6 +53,14 @@ const DEFAULTS = {
 	/** 服务启动后最多等多久（毫秒）。 */
 	startTimeoutMs: 20000,
 	/**
+	 * 日志与痕迹落盘目录；留空 = `<projectDir>/data`。
+	 *
+	 * 给测试用：用例会反复起停服务，若都写项目自己的 data/，真实的
+	 * admin_ui.log 会被测试端口（8896/8897…）刷屏，排查故障时看到的第一手
+	 * 证据就废了。测试传一个临时目录进来即可完全隔离。
+	 */
+	logDir: "",
+	/**
 	 * 挂到 DSH 自身服务器上的同源前缀，空串 = 不挂。
 	 *
 	 * 为什么要这一层：iframe 跨源（DSH 在 A 端口、面板在 8899）能显示，但要求
@@ -202,13 +210,14 @@ function resolvePython(config, projectDir) {
  * 后台拉起管理服务，返回 { child, kill } 或 null。
  * stdout/stderr 落到临时日志，方便起不来时排查。
  */
-function launchAdmin(config, projectDir, port) {
+function launchAdmin(config, projectDir, port, logDir = null) {
 	const python = resolvePython(config, projectDir);
 	let logFd;
 	let logPath;
 	try {
-		mkdirSync(resolve(projectDir, "data"), { recursive: true });
-		logPath = resolve(projectDir, "data", "admin_ui.log");
+		const dir = logDir ?? resolve(projectDir, "data");
+		mkdirSync(dir, { recursive: true });
+		logPath = resolve(dir, "admin_ui.log");
 		logFd = openSync(logPath, "a");
 	} catch {
 		logFd = undefined;
@@ -261,6 +270,11 @@ export function apply(ctx, config = {}) {
 	// 先把 projectDir 定下来，后面所有落盘（面板痕迹 / admin_ui.log）都读它，
 	// 保证两者不会落到两个不同目录里去。
 	traceProjectDir = resolve(String(merged.projectDir ?? DEFAULTS.projectDir));
+	// 日志目录只由 config.logDir 决定（留空 = <projectDir>/data）。测试传临时目录，
+	// 免得反复起停的 python 把真实的 admin_ui.log 刷成噪声。
+	const traceLogDir = String(merged.logDir ?? "").trim()
+		? resolve(String(merged.logDir).trim())
+		: null;
 	const configuredUrl = String(merged.adminUrl ?? DEFAULTS.adminUrl);
 	const configuredPort = portOf(configuredUrl, merged.port);
 	// 实际在用的地址。端口被别的程序占着时会改成旁边的端口，
@@ -368,7 +382,7 @@ export function apply(ctx, config = {}) {
 				port = free;
 				adminUrl = `http://127.0.0.1:${free}`;
 			}
-			launched = launchAdmin(merged, projectDir, port);
+			launched = launchAdmin(merged, projectDir, port, traceLogDir);
 			if (launched.error !== undefined) {
 				bootTrace(ctx, `启动管理服务失败：${launched.error?.message ?? launched.error}`, "warn");
 				return;
@@ -387,7 +401,7 @@ export function apply(ctx, config = {}) {
 			} else if (!disposed) {
 				bootTrace(
 					ctx,
-					`管理服务未能就绪（${pythonHint(launched)}），面板会显示空白；日志见 ${launched.logPath ?? "data/admin_ui.log"}`,
+					`管理服务未能就绪（${pythonHint(launched)}），面板会显示空白；日志见 ${launched.logPath ?? "(日志目录不可写)"}`,
 					"warn"
 				);
 			}

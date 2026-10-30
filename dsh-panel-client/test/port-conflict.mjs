@@ -85,6 +85,8 @@ const dispose = apply(ctx, {
 	mountPath: "",
 	projectDir: PROJECT_DIR,
 	startTimeoutMs: 40000,
+	// 日志落临时目录，别把测试端口的启动记录写进真实的 data/admin_ui.log
+	logDir: tmpDbDir,
 	// 用 PY 解析出的解释器；BIONIC_DB_PATH 已在上方设好，测试不会写用户真实库
 	pythonPath: PY
 });

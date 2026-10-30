@@ -78,6 +78,9 @@ app.plugin(plugin, {
 	autoStart: true,
 	mountPath: "",
 	projectDir: PROJECT_DIR,
+	// 日志落临时目录：这条用例会起停好几次服务，写进项目 data/ 会把
+	// 真实的 admin_ui.log 刷成测试噪声，排查真故障时第一手证据就废了。
+	logDir: tmpDbDir,
 	pythonPath: PY,
 	startTimeoutMs: 40000,
 });

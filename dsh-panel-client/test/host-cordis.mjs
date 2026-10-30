@@ -14,6 +14,9 @@ const CORDIS_ENTRY =
 	"C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai/cordis/lib/index.js";
 const { Context } = await import(new URL(`file:///${CORDIS_ENTRY}`).href);
 import { connect } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const TEST_PORT = 8896;
 const TEST_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -46,11 +49,14 @@ app.logger = {
 };
 
 // 关键：用真实的 config（和 cordis.patch.yml 里的一模一样，只换端口避免撞车）
+// logDir 指向临时目录，否则这条用例起的 8896 服务会把真实的
+// data/admin_ui.log 越写越长，真故障的第一手证据就被测试噪声盖住了。
 const config = {
 	adminUrl: TEST_URL,
 	autoStart: true,
 	pythonPath: "",
-	startTimeoutMs: 25000
+	startTimeoutMs: 25000,
+	logDir: mkdtempSync(join(tmpdir(), "bionic-cordis-test-"))
 };
 
 console.log("before: listening =", await isListening(TEST_PORT));
@@ -104,4 +110,9 @@ console.log("after dispose: listening =", stillUp);
 
 const ok = up && !stillUp;
 console.log(ok ? "\n=== PASS：cordis 真实加载路径全部正确 ===" : "\n=== FAIL ===");
+try {
+	rmSync(config.logDir, { recursive: true, force: true });
+} catch {
+	/* Windows 上日志句柄可能还没释放，删不掉不影响结论 */
+}
 process.exit(ok ? 0 : 1);
