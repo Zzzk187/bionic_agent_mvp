@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
@@ -362,6 +362,32 @@ def api_stats():
     return _ok({"memories_total": total, "memories_active": active,
                 "memories_archived": archived, "tasks": tasks,
                 "links": links, "events": events})
+
+
+@app.get("/api/ping")
+def api_ping(request: Request):
+    """被 iframe 页面本身调用，用来证明"面板真的在浏览器里跑起来了"。
+
+    为什么要这个接口：宿主半的 data/panel-boot.log 只能证明 Node 侧加载了插件，
+    证明不了浏览器侧真的求值了 client.js、真的挂上了 iframe。两边都加载成功但
+    中间某处静默失败时，只靠宿主痕迹会误判成"已经好了"。这里落一行
+    data/panel-client.log，重启后一眼就能分清故障在哪一半。
+    """
+    from datetime import datetime, timezone
+    record = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "referer": request.headers.get("referer", ""),
+        "origin": request.headers.get("origin", ""),
+        "user_agent": request.headers.get("user-agent", "")[:120],
+    }
+    try:
+        log_path = Path(__file__).resolve().parent.parent / "data" / "panel-client.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 —— 记账失败绝不能影响面板本身
+        pass
+    return _ok({"pong": True, "at": record["at"]})
 
 
 @app.get("/")

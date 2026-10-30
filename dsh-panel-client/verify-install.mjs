@@ -232,7 +232,41 @@ if (existsSync(bootLog)) {
 		"还没有痕迹：若你尚未重启 DSH 属正常；重启后仍为空，说明插件被宿主静默跳过（多半是 dsh.engines.dsh 不满足）");
 }
 
-// ── 9. 宿主半的日志（启动失败时最直接的证据）─────────────────────────
+// ── 9. 浏览器半的报到痕迹（判断「iframe 到底渲染没渲染」的唯一直接证据）──
+// panel-client.log 由面板页面里的 fetch('/api/ping') 写。它和 panel-boot.log 是
+// 两层独立的信号：前者证明浏览器真的把 iframe 跑起来了，后者只证明 Node 侧加载了。
+// 两个都空 = 没重启；只有 boot 有 = 卡在浏览器端；两个都有 = 通路全通。
+const clientLog = resolve(PKG_DIR, "..", "data", "panel-client.log");
+if (existsSync(clientLog)) {
+	const lines = readFileSync(clientLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	// 只认「被宿主嵌进来的」那一条，其余都不算证据：
+	//  - curl / 脚本探测：user-agent 带 curl/
+	//  - 我或用户直接在浏览器打开 8899：referer 就是 8899 自己
+	// 宿主 iframe 的 referer 一定带 DSH 的端口（如 59647），不含 :8899。
+	const hosted = lines.filter((line) => {
+		if (line.includes("curl/")) return false;
+		let referer = "";
+		try { referer = String(JSON.parse(line).referer || ""); } catch { return false; }
+		return referer !== "" && !referer.includes(":8899");
+	});
+	if (hosted.length > 0) {
+		check("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
+			true,
+			`共 ${lines.length} 条，其中来自宿主 iframe ${hosted.length} 条`);
+		console.log("  最近几条宿主报到：");
+		for (const line of hosted.slice(-3)) console.log("    " + line);
+	} else {
+		// 有记录但没有一条来自宿主 iframe：说明还没被嵌进去过（直开面板/脚本探测都不算）。
+		// 这和"没有文件"是同一件事，只是多了一批噪声记录，同样按待确认处理。
+		pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
+			`有 ${lines.length} 条报到，但都不是宿主 iframe（直开面板或脚本探测不算）；等你重启并点开侧边栏图标后再看`);
+	}
+} else {
+	pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
+		"还没有报到：若你尚未重启/尚未点开面板属正常；重启并点开侧边栏图标后仍为空，说明 client.js 在浏览器端没跑起来");
+}
+
+// ── 10. 宿主半的日志（启动失败时最直接的证据）─────────────────────────
 const logPath = resolve(PKG_DIR, "..", "data", "admin_ui.log");
 if (existsSync(logPath)) {
 	const size = statSync(logPath).size;
