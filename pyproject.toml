@@ -6,6 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.30.0,<2.0.0",
     "fastembed>=0.7.3,<1.0.0",
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.27,<1.0",
 ]
 
 [build-system]
@@ -16,11 +18,12 @@ build-backend = "setuptools.build_meta"
 packages = ["app"]
 
 [tool.setuptools.package-data]
-app = ["py.typed"]
+app = ["py.typed", "admin_ui.html"]
 
 [project.scripts]
 bionic-agent = "app.mcp_server:_run_cli"
 bionic-agent-governance = "app.mcp_server_gov:_run_cli"
+bionic-agent-admin = "app.admin_ui:_run_cli"
 
 [tool.setuptools.exclude-package-data]
 app = ["__pycache__", "*.pyc"]

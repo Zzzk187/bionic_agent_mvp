@@ -1,4 +1,4 @@
-"""Build the Phase 5 deliverable ZIP (runnable files only).
+"""Build the distributable ZIP (runnable files only).
 
 Excludes the user's private live database (data/agent.db, data/backups/*) and
 Python caches. A fresh deployment runs `python -m app.migrate_phase5` to create
@@ -10,12 +10,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "dist" / "bionic-agent-mcp.zip"
 
-INCLUDE_DIRS = ["app", "tests"]
+INCLUDE_DIRS = ["app"]
 INCLUDE_FILES = [
     "requirements.txt",
+    "pyproject.toml",
     "README.md",
-    "DELIVERY.md",
-    "DELIVERY_REPORT.md",
     ".env.example",
     "deepseek-harness-mcp.example.yml",
 ]

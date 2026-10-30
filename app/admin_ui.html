@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bionic Agent 管理面板</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1e222e; --line:#2a2f3c;
+    --txt:#e6e9ef; --muted:#8a92a6; --accent:#5b8cff; --accent2:#39d0a3;
+    --warn:#ffb454; --danger:#ff6b6b; --ok:#39d0a3;
+    --chip:#222838;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#171a23,#13161e)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .stats{margin-left:auto;display:flex;gap:14px;color:var(--muted);font-size:12px}
+  header .stats b{color:var(--txt)}
+  .tabs{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--line);background:var(--panel)}
+  .tab{padding:8px 16px;border:none;background:none;color:var(--muted);cursor:pointer;font-size:14px;
+    border-bottom:2px solid transparent}
+  .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .view{display:none;padding:16px;max-width:1100px;margin:0 auto}
+  .view.active{display:block}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;padding:7px 10px;font-size:13px;outline:none}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  textarea{resize:vertical;font-family:inherit}
+  button{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:7px 14px;
+    cursor:pointer;font-size:13px;font-weight:500}
+  button.ghost{background:var(--chip);color:var(--txt)}
+  button.danger{background:var(--danger)}
+  button.ok{background:var(--ok)}
+  button.warn{background:var(--warn);color:#222}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+  .mem{border-left:3px solid var(--accent)}
+  .mem.archived{border-left-color:var(--muted);opacity:.78}
+  .mem .top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+  .mem .id{color:var(--muted);font-size:12px}
+  .mem .cat{background:var(--chip);border-radius:20px;padding:2px 10px;font-size:12px;color:var(--accent2)}
+  .mem .content{white-space:pre-wrap;word-break:break-word;margin:4px 0}
+  .mem .meta{color:var(--muted);font-size:12px;display:flex;gap:12px;flex-wrap:wrap}
+  .mem .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .tag{background:#20283b;border-radius:5px;padding:1px 7px;font-size:11px;color:#9db4ff;margin-right:4px}
+  .score{font-size:11px;color:var(--warn)}
+  .empty{color:var(--muted);text-align:center;padding:40px}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal-bg.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;width:min(640px,92vw);max-height:86vh;overflow:auto}
+  .modal h3{margin:0 0 14px}
+  .modal label{display:block;color:var(--muted);font-size:12px;margin:10px 0 4px}
+  .modal input,.modal textarea,.modal select{width:100%}
+  .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+  .search-type{display:flex;gap:6px;align-items:center}
+  .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;background:var(--chip);color:var(--muted)}
+  .pill.protected{color:var(--warn);background:#33291a}
+  .pill.review{color:var(--accent2);background:#16312a}
+  .detail-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px}
+  .detail-grid .k{color:var(--muted)}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--line);padding:10px 18px;border-radius:8px;display:none;z-index:99;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+  .toast.show{display:block}
+  .toast.err{border-color:var(--danger);color:#ffd2d2}
+  .toast.ok{border-color:var(--ok);color:#cffaec}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500;font-size:12px}
+  .muted{color:var(--muted)}
+  .small{font-size:12px}
+  .rel-node{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:8px;
+    padding:6px 10px;margin:4px;max-width:280px;vertical-align:top}
+  .rel-edge{color:var(--muted);font-size:11px;margin:0 4px}
+  .badge{font-size:11px;padding:1px 7px;border-radius:5px;background:var(--chip)}
+  .badge.pending{color:var(--warn)}
+  .badge.applied{color:var(--ok)}
+  .badge.rejected{color:var(--danger)}
+  details{margin-top:6px}
+  summary{cursor:pointer;color:var(--muted);font-size:12px}
+  pre{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;overflow:auto;font-size:12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Bionic Agent 管理面板</h1>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-tab="memories">记忆</button>
+  <button class="tab" data-tab="tasks">任务</button>
+  <button class="tab" data-tab="governance">治理</button>
+</div>
+
+<!-- ========== 记忆 ========== -->
+<div class="view active" id="memories">
+  <div class="toolbar">
+    <input id="memSearch" placeholder="关键词 / 留空列出最近" style="min-width:240px" />
+    <select id="memCategory">
+      <option value="">全部分类</option>
+    </select>
+    <label class="search-type">
+      <input type="radio" name="memMode" value="keyword" checked /> 关键词
+    </label>
+    <label class="search-type">
+      <input type="radio" name="memMode" value="semantic" /> 语义
+    </label>
+    <button id="memSearchBtn">搜索</button>
+    <label style="color:var(--muted)"><input type="checkbox" id="memArchived" /> 含归档</label>
+    <button class="ghost" id="memRefresh">刷新</button>
+    <button id="memNew">+ 新建记忆</button>
+  </div>
+  <div id="memList"></div>
+</div>
+
+<!-- ========== 任务 ========== -->
+<div class="view" id="tasks">
+  <div class="toolbar">
+    <button id="taskNew">+ 新建任务</button>
+    <button class="ghost" id="taskRefresh">刷新</button>
+  </div>
+  <div id="taskList"></div>
+</div>
+
+<!-- ========== 治理 ========== -->
+<div class="view" id="governance">
+  <div class="toolbar">
+    <button id="govScore">评分扫描</button>
+    <button id="govDetect">冲突检测</button>
+    <button id="govDup">重复识别</button>
+    <button id="govConsol">巩固候选</button>
+    <button id="govWarmup">预热嵌入</button>
+    <select id="govCategory"><option value="">全部分类</option></select>
+    <span id="embStatus" class="pill"></span>
+    <button class="ghost" id="govRefresh">刷新</button>
+  </div>
+  <div id="govOut"></div>
+</div>
+
+<!-- 编辑/新建 记忆 Modal -->
+<div class="modal-bg" id="memModalBg">
+  <div class="modal">
+    <h3 id="memModalTitle">新建记忆</h3>
+    <input type="hidden" id="memId" />
+    <label>内容 *</label>
+    <textarea id="memContent" rows="5"></textarea>
+    <label>分类</label>
+    <input id="memCat" placeholder="general" />
+    <label>来源</label>
+    <input id="memSource" placeholder="admin-ui" />
+    <label>置信度 (0-1)</label>
+    <input id="memConf" type="number" step="0.05" min="0" max="1" value="0.8" />
+    <label>标签 (逗号分隔)</label>
+    <input id="memTags" placeholder="工作, 偏好" />
+    <div class="row">
+      <button class="ghost" id="memCancel">取消</button>
+      <button id="memSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 记忆详情 Modal -->
+<div class="modal-bg" id="detailModalBg">
+  <div class="modal">
+    <h3>记忆详情 <span id="detailId" class="muted small"></span></h3>
+    <div id="detailBody"></div>
+    <div class="row">
+      <button id="detailFeedback">标记有用</button>
+      <button class="ghost" id="detailClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建/编辑 任务 Modal -->
+<div class="modal-bg" id="taskModalBg">
+  <div class="modal">
+    <h3>新建任务</h3>
+    <label>标题 *</label>
+    <input id="taskTitle" placeholder="任务标题" />
+    <label>目标 *</label>
+    <textarea id="taskGoal" rows="4" placeholder="这个任务要达成什么"></textarea>
+    <div class="row">
+      <button class="ghost" id="taskCancel">取消</button>
+      <button id="taskSave">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 任务阶段 Modal -->
+<div class="modal-bg" id="taskStageBg">
+  <div class="modal">
+    <h3 id="taskStageTitle">阶段交接</h3>
+    <input type="hidden" id="stageTaskId" />
+    <input type="hidden" id="stageMode" />
+    <label>摘要</label>
+    <textarea id="stageSummary" rows="4"></textarea>
+    <label>状态 JSON (可选)</label>
+    <textarea id="stageState" rows="3" placeholder='{"k":"v"}'>{}</textarea>
+    <div class="row">
+      <button class="ghost" id="stageCancel">取消</button>
+      <button id="stageSave">提交</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s,el=document)=>el.querySelector(s);
+const $$ = (s,el=document)=>[...el.querySelectorAll(s)];
+const api = async (url, opts={}) => {
+  const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+  const j = await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
+  return j;
+};
+const esc = s => (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function toast(msg, kind='ok'){
+  const t=$('#toast'); t.textContent=msg; t.className='toast show '+kind;
+  setTimeout(()=>t.className='toast', 2600);
+}
+async function loadStats(){
+  const j = await api('/api/stats');
+  if(j.ok){
+    const s=j.data;
+    $('#stats').innerHTML = [
+      ['记忆', s.memories_total], ['活跃', s.memories_active], ['归档', s.memories_archived],
+      ['任务', s.tasks], ['关系', s.links], ['事件', s.events]
+    ].map(([k,v])=>`<span>${k} <b>${v}</b></span>`).join('');
+  }
+}
+
+/* ---------- Tabs ---------- */
+$$('.tab').forEach(t=>t.onclick=()=>{
+  $$('.tab').forEach(x=>x.classList.remove('active'));
+  $$('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  $('#'+t.dataset.tab).classList.add('active');
+  if(t.dataset.tab==='memories') loadMemories();
+  if(t.dataset.tab==='tasks') loadTasks();
+  if(t.dataset.tab==='governance') loadGovStatus();
+});
+
+/* ---------- 记忆 ---------- */
+async function loadCategories(){
+  // 从记忆列表推断分类
+  const j = await api('/api/memories?limit=200');
+  if(!j.ok) return;
+  const cats = [...new Set(j.data.map(m=>m.category).filter(Boolean))];
+  const sel = $('#memCategory'); const cur=sel.value;
+  sel.innerHTML = '<option value="">全部分类</option>'+cats.map(c=>`<option>${esc(c)}</option>`).join('');
+  sel.value = cur;
+  const gsel = $('#govCategory'); gsel.innerHTML = sel.innerHTML;
+}
+async function loadMemories(){
+  const q = $('#memSearch').value.trim();
+  const cat = $('#memCategory').value;
+  const inc = $('#memArchived').checked;
+  const mode = $('input[name=memMode]:checked').value;
+  let url, j;
+  if(mode==='semantic' && q){
+    j = await api(`/api/memories/search/semantic?q=${encodeURIComponent(q)}&limit=20&category=${encodeURIComponent(cat)}`);
+    if(j.ok && j.data.degraded){
+      toast('嵌入模型未就绪，已降级为关键词检索', 'err');
+      $('#memList').innerHTML = (j.data.results||[]).map(memCard).join('') || '<div class="empty">无结果</div>';
+      return;
+    }
+    const list = j.ok ? (j.data.results||[]) : [];
+    $('#memList').innerHTML = list.map(m=>memCard(m, true)).join('') || '<div class="empty">无结果</div>';
+    return;
+  }
+  url = `/api/memories?limit=60&category=${encodeURIComponent(cat)}&include_archived=${inc?1:0}`;
+  if(q) url += `&q=${encodeURIComponent(q)}`;
+  j = await api(url);
+  $('#memList').innerHTML = j.ok ? (j.data.length?j.data.map(m=>memCard(m)).join(''):'<div class="empty">暂无记忆，点「+ 新建记忆」</div>')
+    : `<div class="empty">${esc(j.message)}</div>`;
+}
+function memCard(m, showScore=false){
+  const arch = m.status==='archived';
+  const tags = (m.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('');
+  const flags = [];
+  if(m.protected) flags.push('<span class="pill protected">保护</span>');
+  if(m.memory_status==='pending_review') flags.push('<span class="pill review">待审</span>');
+  const sc = showScore && m.similarity!=null ? `<span class="score">相似度 ${m.similarity.toFixed(3)}</span>` : '';
+  return `<div class="card mem ${arch?'archived':''}" data-id="${m.id}">
+    <div class="top">
+      <span class="id">#${m.id}</span>
+      <span class="cat">${esc(m.category||'general')}</span>
+      ${tags}${flags.join('')}${sc}
+    </div>
+    <div class="content">${esc(m.content)}</div>
+    <div class="meta">
+      <span>来源 ${esc(m.source||'')}</span>
+      <span>置信 ${(m.confidence*100|0)}%</span>
+      <span>${esc(m.created_at||'')}</span>
+      <span>${esc(m.updated_at||'')}</span>
+    </div>
+    <div class="acts">
+      <button class="ghost" onclick="viewDetail(${m.id})">详情</button>
+      <button class="ghost" onclick="editMem(${m.id})">编辑</button>
+      <button class="ghost" onclick="openLinks(${m.id})">关系</button>
+      ${arch
+        ? `<button class="ok" onclick="restoreMem(${m.id})">恢复</button>`
+        : `<button class="warn" onclick="archiveMem(${m.id})">归档</button>
+           <button class="ghost" onclick="protectMem(${m.id},true)">保护</button>
+           <button class="ghost" onclick="reviewMem(${m.id})">置待审</button>`}
+      ${arch?`<button class="danger" onclick="govArchive(${m.id})">治理归档</button>`:''}
+    </div>
+  </div>`;
+}
+$('#memSearchBtn').onclick = loadMemories;
+$('#memRefresh').onclick = ()=>{loadMemories();loadCategories();};
+$('#memArchived').onchange = loadMemories;
+$('#memSearch').onkeydown = e=>{if(e.key==='Enter') loadMemories();};
+
+$('#memNew').onclick = ()=>{
+  $('#memModalTitle').textContent='新建记忆';
+  $('#memId').value=''; $('#memContent').value=''; $('#memCat').value='general';
+  $('#memSource').value='admin-ui'; $('#memConf').value='0.8'; $('#memTags').value='';
+  $('#memModalBg').classList.add('show');
+};
+$('#memCancel').onclick = ()=>$('#memModalBg').classList.remove('show');
+$('#memSave').onclick = async ()=>{
+  const id = $('#memId').value;
+  const payload = {content:$('#memContent').value, category:$('#memCat').value,
+    source:$('#memSource').value, confidence:parseFloat($('#memConf').value||0.8),
+    tags:$('#memTags').value};
+  let j;
+  if(id){ j = await api(`/api/memories/${id}`, {method:'PUT', body:JSON.stringify(payload)}); }
+  else { j = await api('/api/memories', {method:'POST', body:JSON.stringify(payload)}); }
+  if(j.ok){ toast(id?'已更新':'已创建'); $('#memModalBg').classList.remove('show'); loadMemories(); loadStats(); }
+  else toast(j.message||'失败', 'err');
+};
+async function editMem(id){
+  const j = await api(`/api/memories/${id}`);
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const m=j.data;
+  $('#memModalTitle').textContent='编辑记忆 #'+id;
+  $('#memId').value=id; $('#memContent').value=m.content; $('#memCat').value=m.category||'general';
+  $('#memSource').value=m.source||'admin-ui'; $('#memConf').value=m.confidence||0.8;
+  $('#memTags').value=(m.tags||[]).join(', ');
+  $('#memModalBg').classList.add('show');
+}
+async function archiveMem(id){ const j=await api(`/api/memories/${id}/archive`,{method:'POST'}); toast(j.ok?'已归档':'失败', j.ok?'ok':'err'); loadMemories(); loadStats(); }
+async function restoreMem(id){ const j=await api(`/api/memories/${id}/restore`,{method:'POST'}); toast(j.ok?'已恢复':'失败', j.ok?'ok':'err'); loadMemories(); loadStats(); }
+async function protectMem(id,p){ const j=await api(`/api/memories/${id}/protect`,{method:'POST',body:JSON.stringify({protected:p})}); toast(j.ok?'已保护':'失败', j.ok?'ok':'err'); loadMemories(); }
+async function reviewMem(id){ const j=await api(`/api/memories/${id}/review`,{method:'POST',body:JSON.stringify({reason:'admin-ui 置待审'})}); toast(j.ok?'已置待审':'失败', j.ok?'ok':'err'); loadMemories(); }
+async function govArchive(id){ const j=await api(`/api/memories/${id}/governance-archive`,{method:'POST',body:JSON.stringify({reason:'admin-ui 治理归档'})}); toast(j.ok?'已治理归档':'失败', j.ok?'ok':'err'); loadMemories(); loadStats(); }
+
+async function viewDetail(id){
+  const j = await api(`/api/memories/${id}/details`);
+  $('#detailId').textContent='#'+id;
+  if(!j.ok){ $('#detailBody').innerHTML=`<div class="empty">${esc(j.message)}</div>`; }
+  else{
+    const d=j.data; const m=d.memory||{};
+    let html = `<div class="detail-grid">`;
+    for(const k of ['id','category','source','status','memory_status','created_at','updated_at','confidence','access_count']){
+      if(m[k]!==undefined) html += `<div class="k">${k}</div><div>${esc(m[k])}</div>`;
+    }
+    html += `</div>`;
+    if(m.tags&&m.tags.length) html += `<p class="small">标签: ${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</p>`;
+    if(d.lifecycle) html += `<p class="small">生命周期: ${esc(d.lifecycle)}</p>`;
+    if(d.governance){
+      const g=d.governance;
+      html += `<details open><summary>治理视图</summary><pre>${esc(JSON.stringify(g,null,2))}</pre></details>`;
+    }
+    if(d.relations){
+      html += `<p class="small">关系 (${d.relations.length})</p>`;
+      html += d.relations.slice(0,20).map(r=>`<span class="rel-node">#${r.target_id||r.id} <span class="rel-edge">${esc(r.relation)}</span></span>`).join('');
+    }
+    if(d.usage) html += `<details><summary>使用统计</summary><pre>${esc(JSON.stringify(d.usage,null,2))}</pre></details>`;
+    $('#detailBody').innerHTML = html;
+  }
+  $('#detailModalBg').classList.add('show');
+  $('#detailFeedback').onclick = async ()=>{
+    const j2=await api(`/api/memories/${id}/feedback`,{method:'POST',body:JSON.stringify({feedback_type:'helpful'})});
+    toast(j2.ok?'已记录':'失败', j2.ok?'ok':'err');
+  };
+}
+$('#detailClose').onclick = ()=>$('#detailModalBg').classList.remove('show');
+
+async function openLinks(id){
+  const j = await api(`/api/memories/${id}/links`);
+  let html = `<p class="small">为 #${id} 添加关系</p>
+    <div class="toolbar">
+      <input id="lnkTarget" placeholder="目标记忆 id" style="width:120px" type="number" />
+      <select id="lnkRel"><option value="related">related</option><option value="supersedes">supersedes</option><option value="derived_from">derived_from</option><option value="contradicts">contradicts</option><option value="supports">supports</option></select>
+      <input id="lnkNote" placeholder="备注" style="flex:1" />
+      <button id="lnkAdd">添加</button>
+    </div>
+    <div id="lnkList"></div>`;
+  $('#detailBody').innerHTML = html;
+  $('#detailId').textContent = '#'+id+' 关系';
+  const render = (links)=>{
+    $('#lnkList').innerHTML = (links||[]).map(l=>
+      `<div class="rel-node">#${l.target_memory_id||l.target_id} <span class="rel-edge">${esc(l.relation)}</span> ${esc(l.note||'')}</div>`
+    ).join('') || '<div class="empty small">暂无关系</div>';
+  };
+  if(j.ok) render(j.data);
+  $('#lnkAdd').onclick = async ()=>{
+    const t=parseInt($('#lnkTarget').value); if(!t){toast('填目标 id','err');return;}
+    const r=await api('/api/links',{method:'POST',body:JSON.stringify({source_memory_id:id,target_memory_id:t,relation:$('#lnkRel').value,note:$('#lnkNote').value})});
+    if(r.ok){ toast('已添加'); const j2=await api(`/api/memories/${id}/links`); if(j2.ok) render(j2.data); }
+    else toast(r.message,'err');
+  };
+  $('#detailModalBg').classList.add('show');
+}
+
+/* ---------- 任务 ---------- */
+async function loadTasks(){
+  const j = await api('/api/tasks');
+  if(!j.ok){ $('#taskList').innerHTML=`<div class="empty">${esc(j.message)}</div>`; return; }
+  $('#taskList').innerHTML = j.data.length ? j.data.map(taskCard).join('') : '<div class="empty">暂无任务</div>';
+}
+function taskCard(t){
+  const plan = (t.plan||[]).map(p=>`<li class="small">${p.status==='done'?'✅':'⬜'} ${esc(p.title||'')}</li>`).join('');
+  let color = t.status==='completed'?'var(--ok)':t.status==='handoff'?'var(--warn)':'var(--accent)';
+  return `<div class="card" data-id="${t.id}">
+    <div class="top" style="display:flex;gap:8px;align-items:center">
+      <span class="id">#${t.id}</span>
+      <b>${esc(t.title)}</b>
+      <span class="badge" style="color:${color}">${esc(t.status)}</span>
+      <span class="muted small">阶段 ${t.current_stage}</span>
+    </div>
+    <div class="content small">${esc(t.goal)}</div>
+    ${plan?`<ul style="margin:6px 0">${plan}</ul>`:''}
+    ${t.result?`<div class="small muted">结果: ${esc(t.result)}</div>`:''}
+    <div class="acts">
+      <button class="ghost" onclick="taskDetail(${t.id})">查看</button>
+      <button class="ghost" onclick="stageModal(${t.id},'snapshot')">存快照</button>
+      <button class="warn" onclick="stageModal(${t.id},'handoff')">交接</button>
+      <button class="ok" onclick="completeTask(${t.id})">完成</button>
+      <button class="ghost" onclick="resumeTask(${t.id})">恢复活跃</button>
+    </div>
+  </div>`;
+}
+$('#taskNew').onclick = ()=>$('#taskModalBg').classList.add('show');
+$('#taskCancel').onclick = ()=>$('#taskModalBg').classList.remove('show');
+$('#taskRefresh').onclick = loadTasks;
+$('#taskSave').onclick = async ()=>{
+  const j = await api('/api/tasks',{method:'POST',body:JSON.stringify({title:$('#taskTitle').value,goal:$('#taskGoal').value})});
+  if(j.ok){ toast('已创建任务 #'+j.data.id); $('#taskModalBg').classList.remove('show'); loadTasks(); loadStats(); }
+  else toast(j.message,'err');
+};
+async function taskDetail(id){
+  const j = await api(`/api/tasks/${id}`);
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const t=j.data;
+  let html=`<div class="detail-grid">
+    <div class="k">id</div><div>${t.id}</div>
+    <div class="k">标题</div><div>${esc(t.title)}</div>
+    <div class="k">状态</div><div>${esc(t.status)}</div>
+    <div class="k">阶段</div><div>${t.current_stage}</div>
+    <div class="k">目标</div><div>${esc(t.goal)}</div>
+    <div class="k">结果</div><div>${esc(t.result||'')}</div>
+  </div>`;
+  if(t.snapshots&&t.snapshots.length){
+    html+='<h4>阶段快照</h4>';
+    html+=t.snapshots.map(s=>`<div class="card small"><b>阶段 ${s.stage}</b> <span class="muted">${esc(s.created_at)}</span><div>${esc(s.summary)}</div></div>`).join('');
+  }
+  $('#detailId').textContent='#'+id;
+  $('#detailBody').innerHTML=html;
+  $('#detailFeedback').style.display='none';
+  $('#detailModalBg').classList.add('show');
+}
+function stageModal(id, mode){
+  $('#stageTaskId').value=id; $('#stageMode').value=mode;
+  $('#taskStageTitle').textContent = mode==='handoff'?'任务交接':'保存阶段快照';
+  $('#stageSummary').value=''; $('#stageState').value='{}';
+  $('#taskStageBg').classList.add('show');
+}
+$('#stageCancel').onclick=()=>$('#taskStageBg').classList.remove('show');
+$('#stageSave').onclick=async ()=>{
+  const id=$('#stageTaskId').value, mode=$('#stageMode').value;
+  let stateJson=$('#stageState').value.trim()||'{}';
+  try{ JSON.parse(stateJson); }catch(e){ toast('状态 JSON 非法','err'); return; }
+  const body=JSON.stringify({summary:$('#stageSummary').value, state_json:stateJson});
+  const j = await api(`/api/tasks/${id}/${mode}`,{method:'POST',body});
+  if(j.ok){ toast(mode==='handoff'?'已交接':'已存快照'); $('#taskStageBg').classList.remove('show'); loadTasks(); }
+  else toast(j.message,'err');
+};
+async function completeTask(id){ const j=await api(`/api/tasks/${id}/complete`,{method:'POST',body:JSON.stringify({result:''})}); toast(j.ok?'已完成':'失败', j.ok?'ok':'err'); loadTasks(); loadStats(); }
+async function resumeTask(id){ const j=await api(`/api/tasks/${id}/resume`,{method:'POST'}); toast(j.ok?'已恢复':'失败', j.ok?'ok':'err'); loadTasks(); }
+
+/* ---------- 治理 ---------- */
+async function loadGovStatus(){
+  const j = await api('/api/embedding_status');
+  if(j.ok){
+    const e=j.data;
+    const ready = e.model_load_status==='ready';
+    $('#embStatus').textContent = ready?`嵌入: 就绪 (${e.indexed_active_memories}/${e.total_active_memories} 已索引)`:`嵌入: ${e.model_load_status||'?'} (${e.indexed_active_memories||0}/${e.total_active_memories||0})`;
+    $('#embStatus').className = 'pill'+(ready?'':' warn');
+  }
+}
+$('#govRefresh').onclick = loadGovStatus;
+$('#govWarmup').onclick = async ()=>{ const j=await api('/api/embedding/warmup',{method:'POST'}); toast(j.ok?'已触发预热':'失败', j.ok?'ok':'err'); setTimeout(loadGovStatus,1500); };
+$('#govScore').onclick = async ()=>{
+  const j=await api(`/api/governance/score?category=${encodeURIComponent($('#govCategory').value)}&limit=50`);
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const rows=(j.data.scores||j.data||[]).slice(0,50);
+  $('#govOut').innerHTML=`<h3>评分扫描 (${rows.length})</h3><table><tr><th>id</th><th>分类</th><th>重要</th><th>置信</th><th>新鲜</th><th>访问</th></tr>${
+    rows.map(r=>`<tr><td>#${r.id}</td><td>${esc(r.category||'')}</td><td>${r.importance_score??'-'}</td><td>${r.confidence_score??'-'}</td><td>${r.freshness_score??'-'}</td><td>${r.access_count??'-'}</td></tr>`).join('')
+  }</table>`;
+};
+$('#govDetect').onclick = async ()=>{
+  const j=await api('/api/governance/detect',{method:'POST',body:JSON.stringify({category:$('#govCategory').value})});
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const rows=j.data.findings||j.data||[];
+  $('#govOut').innerHTML=`<h3>冲突检测 (${rows.length})</h3>`+(rows.length?`<table><tr><th>id_a</th><th>id_b</th><th>类型</th><th>相似</th><th>建议</th></tr>${
+    rows.map(r=>`<tr><td>#${r.memory_id}</td><td>#${r.candidate_memory_id}</td><td>${esc(r.conflict_type)}</td><td>${r.similarity?.toFixed?.(3)??r.similarity}</td><td>${esc(r.recommendation)}</td></tr>`).join('')
+  }</table>`:'<div class="empty">未发现冲突</div>');
+};
+$('#govDup').onclick = async ()=>{
+  const j=await api(`/api/governance/duplicates?category=${encodeURIComponent($('#govCategory').value)}`);
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const rows=j.data||[];
+  $('#govOut').innerHTML=`<h3>重复识别 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><b>#${r.id||r.memory_id}</b> ${esc(r.content||'')}</div>`).join(''):'<div class="empty">未发现重复</div>');
+};
+$('#govConsol').onclick = async ()=>{
+  const j=await api(`/api/governance/consolidation?limit=50`);
+  if(!j.ok){ toast(j.message,'err'); return; }
+  const rows=j.data.candidates||j.data||[];
+  $('#govOut').innerHTML=`<h3>巩固候选 (${rows.length})</h3>`+(rows.length?rows.map(r=>`<div class="card small"><span class="badge ${r.status}">${esc(r.status)}</span> <b>${esc(r.kind)}</b> ${esc(r.title||'')}<div class="muted">${esc(r.detail||'')}</div></div>`).join(''):'<div class="empty">暂无候选</div>');
+};
+
+/* ---------- 启动 ---------- */
+(async ()=>{ await loadStats(); await loadCategories(); await loadMemories(); })();
+</script>
+</body>
+</html>

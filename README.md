@@ -95,6 +95,28 @@ python -m venv .venv
 
 ---
 
+## 可视化管理面板（Web UI）
+
+不想只走 MCP 工具调用？仓库自带一个**自包含 Web 管理面板**，直连 `data/agent.db`，
+零外部 CDN、可离线打开，覆盖记忆 / 任务 / 治理三大模块：记忆与任务 CRUD、语义检索、
+关系图、治理评分 / 冲突检测 / 重复识别 / 巩固候选、嵌入模型预热与状态。
+
+```bash
+# 装好依赖后（含新建的 fastapi / uvicorn）
+.venv/Scripts/python -m app.admin_ui                # 默认 http://127.0.0.1:8899
+.venv/Scripts/python -m app.admin_ui --host 0.0.0.0 --port 8900   # 自定义
+# 或走安装好的入口
+bionic-agent-admin
+```
+
+浏览器打开 `http://127.0.0.1:8899` 即可。面板直接用 `app.*` 的现成函数读写与 MCP 同一份
+数据库，因此**和 MCP 工具完全等价、实时同步**——在面板里改的记忆，MCP 工具立刻能读到。
+
+> 设计取舍：面板是**独立进程**（FastAPI），不侵入 DeepSeek Harness 的 Electron/asar，
+> 因此宿主更新、热重载都不会影响它；想嵌进 DSH 界面则需另写 Cordis client 插件（成本更高）。
+
+---
+
 ## 项目结构
 
 ```
@@ -102,6 +124,8 @@ bionic_agent_mvp/
 ├── app/
 │   ├── mcp_server.py        # 双实例定义（mcp + mcp_gov）+ 21 核心工具
 │   ├── mcp_server_gov.py    # 治理实例启动入口（python -m app.mcp_server_gov）
+│   ├── admin_ui.py          # 可视化管理面板（python -m app.admin_ui，FastAPI）
+│   ├── admin_ui.html        # 面板前端（内联 CSS+JS，零外部依赖）
 │   ├── db.py                # SQLite 初始化 + 幂等迁移 + 事务
 │   ├── embeddings.py        # 本地 FastEmbed 向量（预热/就绪探针/降级）
 │   ├── governance_*.py      # 评分 / 冲突 / 维护 / 规则 / 服务 / 生命周期
