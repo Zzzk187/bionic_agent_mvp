@@ -324,4 +324,24 @@ const iconReg = registrations.find((r) => r.decl.name === "sidebar.panellist");
 const icon = iconReg.Component({ size: 16 });
 console.log("PASS: 侧边栏图标渲染 ->", icon?.type, "| data-dsh-panel-entry =", icon?.props?.["data-dsh-panel-entry"]);
 
+// 回归护栏：main 槽的父级不是我们的定位祖先，容器一旦写 position:absolute
+// 就会相对 viewport 铺满、把整个 DSH 界面遮住（真实踩过的故障，只能重启客户端）。
+// 所以这里明确禁止绝对定位，只认「撑满父容器」的写法。
+const pageReg = registrations.find((r) => r.decl.name === "main");
+const layoutRoot = pageReg.Component({});
+const pageStyle = layoutRoot?.props?.style ?? {};
+const absoluteKeys = ["position", "inset", "top", "left", "right", "bottom", "zIndex"];
+const offenders = absoluteKeys.filter((k) => k in pageStyle);
+if (offenders.length > 0) {
+	console.error(`FAIL: 面板容器用了绝对定位相关属性（${offenders.join(", ")}），会铺满整个窗口遮住界面`);
+	process.exit(1);
+}
+if (pageStyle.height !== "100%") {
+	console.error(`FAIL: 面板容器应 height:100% 撑满父容器，实际 ${JSON.stringify(pageStyle.height)}`);
+	process.exit(1);
+}
+console.log("PASS: 面板容器用撑满父容器的布局，未使用绝对定位 —", JSON.stringify({
+	height: pageStyle.height, minHeight: pageStyle.minHeight, overflow: pageStyle.overflow
+}));
+
 console.log("\n=== 全部通过：client.js 契约与运行时行为正确 ===");

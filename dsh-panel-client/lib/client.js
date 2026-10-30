@@ -284,9 +284,15 @@ window.__ModuleLoader__.load({
 				className: "bionic-agent-panel-view",
 				"data-dsh-plugin": PANEL_ID,
 				"data-dsh-bionic-state": status,
+				// 布局必须用「撑满父容器」而不是绝对定位：main 槽的父级并不是
+				// 我们的定位祖先，写 position:absolute + inset:0 会相对 viewport
+				// 铺满整个窗口，把 DSH 界面全遮住（踩过，只能重启客户端才好）。
+				// 与 @linxin666/dsh-client-ui-skill-explorer 的 .view 保持一致：
+				// height:100% + min-height:0 + overflow:hidden，自身作为 flex 列。
 				style: {
-					position: "absolute", inset: 0, border: "none", overflow: "hidden",
-					background: "#fff", display: "flex", flexDirection: "column"
+					height: "100%", minHeight: 0, overflow: "hidden",
+					border: "none", background: "#fff",
+					display: "flex", flexDirection: "column"
 				},
 				children
 			});
