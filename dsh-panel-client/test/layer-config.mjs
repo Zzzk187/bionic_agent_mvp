@@ -4,10 +4,14 @@
 // 需要宿主 asar 解包出的 @deepseek-ai/dsh-app-boot（环境缺失就 SKIP）。
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { resolveDeps, toUrl } from "./deps.mjs";
 
-const DEPS =
-	process.env.DEPS_DIR ??
-	"C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai";
+// 宿主依赖目录：DEPS_DIR → 已解包的默认位置 → 现场从 app.asar 解出 → 都没有则 SKIP。
+const DEPS = resolveDeps();
+if (!DEPS) {
+	console.log("[SKIP] 拿不到宿主依赖（没装 DSH，或用 DEPS_DIR 指定 @deepseek-ai 目录）");
+	process.exit(0);
+}
 
 const DSH_HOME =
 	process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".dsh");
@@ -21,7 +25,7 @@ if (!existsSync(APP_BOOT)) {
 	process.exit(0);
 }
 
-const mod = await import(`file:///${APP_BOOT.replace(/\\/g, "/")}`);
+const mod = await import(toUrl(APP_BOOT));
 const loadProfileDirectory = mod.loadProfileDirectory ?? mod.default?.loadProfileDirectory;
 if (typeof loadProfileDirectory !== "function") {
 	console.log("SKIP: dsh-app-boot 没有导出 loadProfileDirectory，导出 =", Object.keys(mod));

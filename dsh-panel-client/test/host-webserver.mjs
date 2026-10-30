@@ -16,10 +16,14 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDeps } from "./deps.mjs";
 
-const DEPS =
-	process.env.DEPS_DIR ??
-	"C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai";
+// 宿主依赖目录：DEPS_DIR → 已解包的默认位置 → 现场从 app.asar 解出 → 都没有则 SKIP。
+const DEPS = resolveDeps();
+if (!DEPS) {
+	console.log("[SKIP] 拿不到宿主依赖（没装 DSH，或用 DEPS_DIR 指定 @deepseek-ai 目录）");
+	process.exit(0);
+}
 const CORDIS = join(DEPS, "cordis", "lib", "index.js");
 const WEBSERVER = join(DEPS, "dsh-host-webserver", "lib", "index.js");
 

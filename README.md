@@ -236,8 +236,14 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 >   `register()` 的契约，但证明不了「服务就绪时才回调」这条路径通不通——它不通时
 >   插件会安静地什么都不挂，而假 webServer 的用例永远是绿的。
 >
-> 两条都需要宿主源码（默认 `C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai`，
-> 可用 `DEPS_DIR` 覆盖），拿不到时 SKIP 而不是 FAIL。
+> 这一层需要宿主源码（`@deepseek-ai/cordis` / `dsh-app-boot` / `dsh-host-webserver`，
+> 它们只存在于 DSH 安装目录的 `app.asar` 里）。**不需要你手工准备**：
+> `test/deps.mjs` 会按「`DEPS_DIR` 环境变量 → 已解包位置 → 现场从 `app.asar` 解出」
+> 的顺序找，首次自动解包约 3 秒、落在 `C:/tmp/dsh_asar_extract/`（约 3MB）。
+> 换机器、或者有人清了 `C:/tmp`，下一次跑自检会自动补回来。
+> 只有连 `app.asar` 都找不到（没装 DSH）时才 SKIP 而不是 FAIL。
+> 想自己控制位置：`DEPS_DIR=<@deepseek-ai 目录> node test/all.mjs`，或单独运行
+> `node test/extract-deps.mjs --out <目录>`。
 
 ---
 

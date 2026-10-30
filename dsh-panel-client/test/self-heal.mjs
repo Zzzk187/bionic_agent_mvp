@@ -12,14 +12,18 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync, execFileSync } from "node:child_process";
+import { resolveDeps, toUrl } from "./deps.mjs";
 
 process.env.BIONIC_PANEL_NO_TRACE = "1";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PKG_DIR = dirname(TEST_DIR);
 const PROJECT_DIR = dirname(PKG_DIR);
-const DEPS = process.env.DEPS_DIR || "C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai";
-const toUrl = (p) => new URL(`file:///${p.replace(/\\/g, "/")}`).href;
+const DEPS = resolveDeps();
+if (!DEPS) {
+	console.log("[SKIP] 拿不到宿主依赖（没装 DSH，或用 DEPS_DIR 指定 @deepseek-ai 目录）");
+	process.exit(0);
+}
 
 const PORT = 8896;
 const PY = process.env.BIONIC_PYTHON || "D:/Software/Dev/Miniforge/python.exe";

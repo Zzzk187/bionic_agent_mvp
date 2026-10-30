@@ -11,12 +11,17 @@ process.env.BIONIC_PANEL_NO_TRACE = "1";
 
 const CORDIS_ENTRY =
 	process.env.DSH_CORDIS ??
-	"C:/tmp/dsh_asar_extract/app/dsh/node_modules/@deepseek-ai/cordis/lib/index.js";
-const { Context } = await import(new URL(`file:///${CORDIS_ENTRY}`).href);
+	(resolveDeps() ? join(resolveDeps(), "cordis", "lib", "index.js") : undefined);
+if (!CORDIS_ENTRY || !existsSync(CORDIS_ENTRY)) {
+	console.log("[SKIP] 找不到宿主 cordis（用 DEPS_DIR 指定 @deepseek-ai 目录，或先装好 DSH）");
+	process.exit(0);
+}
+const { Context } = await import(toUrl(CORDIS_ENTRY));
 import { connect } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveDeps, toUrl } from "./deps.mjs";
 
 const TEST_PORT = 8896;
 const TEST_URL = `http://127.0.0.1:${TEST_PORT}`;
