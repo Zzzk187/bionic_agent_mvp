@@ -59,6 +59,9 @@ const reactStub = {
 	__cleanups: [],
 	__fetched: [],
 	__serviceUp: true,
+	// 模拟"同源挂载没生效、请求被 DSH 自己的回退处理器 200 收走"：
+	// 只看 resp.ok 会误判成都就绪，必须靠 JSON 判定。
+	__mountBroken: false,
 	__beginRender() {
 		reactStub.__cursor = 0;
 		reactStub.__effectCursor = 0;
@@ -82,12 +85,29 @@ const requireStub = (spec) => {
 	throw new Error("unexpected require: " + spec);
 };
 
-// 页面会 fetch(`${DEFAULT_ADMIN_URL}/api/stats`) 探测服务是否活着。
+// 页面会 fetch(`${MOUNT_PATH}/api/stats` 与 `${FALLBACK_ADMIN_URL}/api/stats`) 探测服务是否活着。
 // 桩的行为由 reactStub.__serviceUp 控制，以便分别测「服务在」与「服务不在」两条路径。
+// __htmlOn 用来模拟"同源路由没挂上、DSH 的回退处理器返回了 200 的 HTML"——
+// 只看 resp.ok 会把它当成服务就绪，于是 iframe 嵌进 DSH 界面自己。
 const fetchStub = async (url) => {
-	reactStub.__fetched.push(String(url));
-	if (reactStub.__serviceUp) return { ok: true, status: 200 };
-	throw new Error("connect ECONNREFUSED 127.0.0.1:8899");
+	const target = String(url);
+	reactStub.__fetched.push(target);
+	const isMount = target.startsWith("/bionic-panel");
+	const up = reactStub.__serviceUp && !(isMount && reactStub.__mountBroken);
+	if (!up) {
+		if (isMount && reactStub.__mountBroken && reactStub.__serviceUp) {
+			// 同源路由被别的处理器接走：200，但不是我们的 JSON
+			return {
+				ok: true,
+				status: 200,
+				json: async () => {
+					throw new SyntaxError("Unexpected token '<'");
+				}
+			};
+		}
+		throw new Error("connect ECONNREFUSED 127.0.0.1:8899");
+	}
+	return { ok: true, status: 200, json: async () => ({ ok: true, data: {} }) };
 };
 
 // 执行 client.js
@@ -272,6 +292,27 @@ check("服务恢复后自愈为 ready",
 check("自愈时 iframe 换了 key 以真正重新加载",
 	typeof iframe?.props?.key === "number" && iframe.props.key > 0,
 	String(iframe?.props?.key));
+
+// 第四轮：同源路由被别的处理器 200 收走（返回 HTML 而非我们的 JSON）。
+// 这是最容易骗过探测的一种"假就绪"：只看 resp.ok 就会把 iframe 指向
+// /bionic-panel/ 而实际嵌进 DSH 界面自己，且不再重试。必须靠 JSON 判定后
+// 退回跨源地址，面板才不会白屏。
+reactStub.__resetAll();
+reactStub.__fetched.length = 0;
+reactStub.__serviceUp = true;
+reactStub.__mountBroken = true;
+reactStub.__beginRender();
+page = mainReg.Component(face);
+await new Promise((r) => setTimeout(r, 30));
+reactStub.__beginRender();
+page = mainReg.Component(face);
+nodes = flatten(page);
+iframe = nodes.find((n) => n?.type === "iframe");
+check("同源返回 HTML 时判定为未就绪并退回跨源地址",
+	page?.props?.["data-dsh-bionic-state"] === "ready" &&
+		/^http:\/\/127\.0\.0\.1:[0-9]+/.test(String(iframe?.props?.src ?? "")),
+	`state=${page?.props?.["data-dsh-bionic-state"]} src=${iframe?.props?.src}`);
+reactStub.__mountBroken = false;
 
 if (failed) {
 	console.error(`FAIL: ${failed} 项渲染检查未通过`);

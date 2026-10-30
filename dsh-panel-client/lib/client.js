@@ -166,75 +166,90 @@ window.__ModuleLoader__.load({
 		// 反过来做（探不到就不渲染 iframe）看着更"严谨"，实际更脆：探测只要
 		// CORS/拦截/版本有任何一处不对，明明能用的面板就会被自己判死、整个变成
 		// 错误页。所以让 iframe 自己加载，探测失败只是在顶部加一条可读的原因。
-		function BionicPanelPage() {
-			// status: "probing" 服务还没应答 / "ready" 已应答 / "down" 等超时还没应答
-			const [status, setStatus] = react.useState("probing");
-			const [detail, setDetail] = react.useState("");
-			// 当前选用的地址：默认先走同源挂载。
-			const [src, setSrc] = react.useState(MOUNT_SRC);
-			// iframe 的重挂载计数。服务是宿主半 spawn 出来的，冷启动要十几秒；
-			// 如果 iframe 先挂上、服务后起来，浏览器已经把那次请求判失败，
-			// iframe 会停在错误页不会自愈。所以服务晚到时改 key 让它重新加载。
-			const [reloadKey, setReloadKey] = react.useState(0);
-			react.useEffect(() => {
-				let cancelled = false;
-				let timer = null;
-				let attempt = 0;
-				// 宿主半最多等 startTimeoutMs（20s）才判定失败，这里探得更久一点，
-				// 保证"服务起来了但探测已经放弃"这种尴尬不会发生。
-				const deadline = Date.now() + PROBE_TIMEOUT_MS;
-				// 同源探不通就永久切到跨源退路，不来回抖。
-				let preferMount = true;
-				const tick = async () => {
-					if (cancelled) return;
-					attempt += 1;
-					if (preferMount) {
+			function BionicPanelPage() {
+				// status: "probing" 服务还没应答 / "ready" 已应答 / "down" 等超时还没应答
+				const [status, setStatus] = react.useState("probing");
+				const [detail, setDetail] = react.useState("");
+				// 当前选用的地址：默认先走同源挂载。
+				const [src, setSrc] = react.useState(MOUNT_SRC);
+				// iframe 的重挂载计数。服务是宿主半 spawn 出来的，冷启动要十几秒；
+				// 如果 iframe 先挂上、服务后起来，浏览器已经把那次请求判失败，
+				// iframe 会停在错误页不会自愈。所以服务晚到时改 key 让它重新加载。
+				const [reloadKey, setReloadKey] = react.useState(0);
+				// 只认"我们自己的接口"应答：同源探测打到 DSH 自己的服务器时，
+				// 挂载没生效的回退处理器可能返回 200 + 一张 HTML 页面。只看 resp.ok
+				// 会把它当成服务就绪，于是 iframe 嵌进 DSH 界面自己、还不再重试。
+				const isOurApi = async (resp) => {
+					if (!resp || resp.ok !== true) return false;
+					if (typeof resp.json !== "function") return true;
+					try {
+						const body = await resp.json();
+						return body !== null && typeof body === "object" && body.ok === true;
+					} catch (_) {
+						return false;
+					}
+				};
+				react.useEffect(() => {
+					let cancelled = false;
+					let timer = null;
+					let attempt = 0;
+					// 宿主半最多等 startTimeoutMs（20s）才判定失败，这里探得更久一点，
+					// 保证"服务起来了但探测已经放弃"这种尴尬不会发生。
+					const deadline = Date.now() + PROBE_TIMEOUT_MS;
+					// 同源探不通就永久切到跨源退路，不来回抖。
+					let preferMount = true;
+					const tick = async () => {
+						if (cancelled) return;
+						attempt += 1;
+						if (preferMount) {
+							try {
+								const resp = await fetch(`${MOUNT_PATH}/api/stats`, { method: "GET" });
+								if (cancelled) return;
+								if (await isOurApi(resp)) {
+									if (cancelled) return;
+									setStatus("ready");
+									setDetail("");
+									setSrc(MOUNT_SRC);
+									if (attempt > 1) setReloadKey((n) => n + 1);
+									return;
+								}
+								setDetail(resp?.ok === true ? "同源路由没交给管理服务" : `HTTP ${resp?.status}`);
+							} catch (error) {
+								if (cancelled) return;
+								preferMount = false;
+								setDetail(String(error?.message ?? error));
+							}
+						}
 						try {
-							const resp = await fetch(`${MOUNT_PATH}/api/stats`, { method: "GET" });
+							const response = await fetch(`${FALLBACK_ADMIN_URL}/api/stats`, { method: "GET" });
 							if (cancelled) return;
-							if (resp.ok) {
+							if (await isOurApi(response)) {
+								if (cancelled) return;
 								setStatus("ready");
 								setDetail("");
-								setSrc(MOUNT_SRC);
+								setSrc(FALLBACK_ADMIN_URL);
+								// 只有"之前探失败过"才需要重挂 iframe；一路顺利就别动它。
 								if (attempt > 1) setReloadKey((n) => n + 1);
 								return;
 							}
-							setDetail(`HTTP ${resp.status}`);
+							setDetail(`HTTP ${response?.status}`);
 						} catch (error) {
 							if (cancelled) return;
-							preferMount = false;
 							setDetail(String(error?.message ?? error));
 						}
-					}
-					try {
-						const response = await fetch(`${FALLBACK_ADMIN_URL}/api/stats`, { method: "GET" });
-						if (cancelled) return;
-						if (response.ok) {
-							setStatus("ready");
-							setDetail("");
-							setSrc(FALLBACK_ADMIN_URL);
-							// 只有"之前探失败过"才需要重挂 iframe；一路顺利就别动它。
-							if (attempt > 1) setReloadKey((n) => n + 1);
+						if (Date.now() >= deadline) {
+							setStatus("down");
 							return;
 						}
-						setDetail(`HTTP ${response.status}`);
-					} catch (error) {
-						if (cancelled) return;
-						setDetail(String(error?.message ?? error));
-					}
-					if (Date.now() >= deadline) {
-						setStatus("down");
-						return;
-					}
-					setStatus("probing");
-					timer = setTimeout(tick, PROBE_INTERVAL_MS);
-				};
-				tick();
-				return () => {
-					cancelled = true;
-					if (timer !== null) clearTimeout(timer);
-				};
-			}, []);
+						setStatus("probing");
+						timer = setTimeout(tick, PROBE_INTERVAL_MS);
+					};
+					tick();
+					return () => {
+						cancelled = true;
+						if (timer !== null) clearTimeout(timer);
+					};
+				}, []);
 			const children = [];
 			if (status !== "ready") {
 				children.push(react_jsx_runtime.jsxs("div", {
