@@ -165,9 +165,12 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 | 无 | — | 宿主根本没加载插件，多半是 `dsh.engines.dsh` 不满足被**静默跳过** |
 
 - `panel-boot.log`：宿主半 `apply()` 一被调用就落一行，证明 Node 侧加载了。
-- `panel-client.log`：面板页面在 iframe 里跑起来后 `fetch('/api/ping')` 报到，
-  证明浏览器侧真的渲染了。脚本探测和直接打开 8899 都不算，只认宿主 iframe
-  （UA 带 `@deepseek-ai/dsh-desktop`）。
+- `panel-client.log`：有两类报到，证据强度不同、**不要混为一谈**：
+  - `source=client-boot`：`client.js` 一被宿主求值就在顶层发出，**不需要用户点开面板**。
+    它证明"浏览器半真的加载了"，是最硬的自动证据（`sec-fetch-dest` 为 `empty`）。
+  - `dest=iframe`：面板页面嵌进 iframe 后由页面自己发出，证明"面板真的被打开过"。
+    这条要人点开图标才有，属于体验验证，不是安装正确性。
+  脚本探测（UA 带 `curl/`）和直接打开 8899（`dest=document`）都不算数。
 - 两份日志都会写进项目 `data/` 目录，已在 `.gitignore` 里。
 - **报到要属于「当前这个服务实例」才算数**：`/api/ping` 每行带一个 `boot` 标识
   （`<pid>-<随机>`，每次启动都不同），`/api/stats` 也返回同一个值。自检拿当前实例的
@@ -176,6 +179,10 @@ node_modules 可解析、patch 内容、`dsh.engines.dsh` 与真实运行时版�
 - **跑完自检若这两项显示 `[PASS]`，但你还没重启过 DSH，那是假信号**——多半是有人
   手动起了服务或用脚本代理过。先删掉 `data/panel-boot.log`、`data/panel-client.log`
   再跑一次，两项应回到 `[WAIT]`。
+- **改了 `lib/client.js` 必须重启 DSH 才生效，刷新页面不够**：宿主按
+  `artifactRevision()`（文件内容 hash）判 bundle 是否要重读，但这份 revision 是
+  进程启动时算好的；只要 DSH 还在跑，`/plugins/<id>/client.js` 就一直发启动时缓存的那份。
+  Node 侧的 `lib/index.js` 同理。所以"我改了代码但行为没变"先确认重启过没有。
 
 > 一个容易忽略的坑：面板服务在 8899，宿主页面在随机端口，**这是跨源**。如果
 > 管理服务没给 CORS 头，跨源 `fetch` 会被浏览器拦掉——服务明明正常，探测也会

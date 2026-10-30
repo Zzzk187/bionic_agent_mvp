@@ -404,12 +404,16 @@ def api_ping(request: Request):
     record = {
         "at": datetime.now(timezone.utc).isoformat(),
         "boot": BOOT_ID,
+        # source=client-boot 由 client.js 顶层发出（插件一被宿主求值就打），
+        # 其余（空）是面板 iframe 里页面自己发的。这个区别很关键：
+        # 前者证明「浏览器半真的加载了」，后者证明「面板真的被打开了」。
+        "source": request.query_params.get("source", ""),
         "referer": request.headers.get("referer", ""),
         "origin": request.headers.get("origin", ""),
         "user_agent": request.headers.get("user-agent", "")[:120],
         # Sec-Fetch-Dest 是浏览器自己加的、页面脚本改不了：iframe 内嵌是 "iframe"，
-        # 直接打开页面是 "document"。有了它，「宿主真的把面板嵌进去了」和
-        # 「有人拿浏览器直接开了这个地址」就不会再混在一起。
+        # 直接打开页面是 "document"，页面自身 fetch 是 "empty"。
+        # 有了它，「宿主真的把面板嵌进去了」和「有人拿浏览器直接开了这个地址」就不会再混在一起。
         "dest": request.headers.get("sec-fetch-dest", ""),
     }
     try:

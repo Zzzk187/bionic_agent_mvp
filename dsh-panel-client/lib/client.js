@@ -39,6 +39,26 @@ window.__ModuleLoader__.load({
 		const PROBE_INTERVAL_MS = 800;
 		const PROBE_TIMEOUT_MS = 30000;
 
+		// 主动报到：client 半一被宿主求值就向管理服务打一声招呼。
+		//
+		// 动机：在此之前，「client 半到底有没有被加载」只能等用户点开侧边栏图标后，
+		// 再看 panel-client.log 里有没有 iframe 发来的 /api/ping；用户不点就永远未知，
+		// 自检只能长期停在 WAIT。而「插件被宿主静默跳过」（dsh.engines.dsh 不满足、
+		// bundle 没层叠）恰恰是最难察觉的失败形态，最需要自动证据。
+		//
+		// 这里发的是 DSH 页面自身的 fetch（不是 iframe 里的），所以
+		// sec-fetch-dest=empty、referer 为空、UA 带 dsh-desktop；
+		// 用 ?source=client-boot 与「用户打开了面板」区分。
+		// 走同源前缀：反代没挂上时它自己会 404/502 —— 那也说明宿主半没就绪。
+		// 全程 catch：报到失败绝不能影响插件加载。
+		const reportClientBoot = () => {
+			try {
+				fetch(MOUNT_PATH + "/api/ping?source=client-boot", { method: "GET", cache: "no-store" })
+					.catch(() => {});
+			} catch (_) { /* 报到失败不影响主流程 */ }
+		};
+		reportClientBoot();
+
 		const zh = {
 			"entry.label": "记忆/任务",
 			"entry.tooltip": "bionic-agent 记忆与任务管理面板",

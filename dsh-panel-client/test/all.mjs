@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { satisfies } from "../semver-lite.mjs";
 
 // 本文件在 test/ 下，包根是上一层
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -95,25 +96,20 @@ console.log("\n=== semver 判断单测 ===");
 const semverCases = JSON.parse(
 	readFileSync(join(TEST_DIR, "semver-cases.json"), "utf8")
 );
-const source = readFileSync(join(PKG_DIR, "verify-install.mjs"), "utf8");
-const start = source.indexOf("function satisfies(");
-const end = source.indexOf("\n}\n", source.indexOf("return false;\n\t\t});", start)) + 3;
-if (start < 0 || end < 3) {
-	console.log("[FAIL] 在 verify-install.mjs 里找不到 satisfies()");
-	failed++;
-} else {
-	const satisfies = new Function(`return ${source.slice(start, end)}`)();
-	let bad = 0;
-	for (const [version, range, want] of semverCases) {
-		const got = satisfies(version, range);
-		if (got !== want) {
-			bad++;
-			console.log(`  [FAIL] ${version} ${range} → ${got}，应为 ${want}`);
-		}
+// 直接 import 被测实现，不再从源文件里抠代码 eval。
+// 之前用 indexOf("function satisfies(") + slice 的方式，文件一旦被编辑器转成 CRLF
+// （锚点里写死的是 \n）就静默变成 [FAIL] 找不到 satisfies()——
+// 测试自身的脆弱会被误读成"被测代码有问题"。
+let bad = 0;
+for (const [version, range, want] of semverCases) {
+	const got = satisfies(version, range);
+	if (got !== want) {
+		bad++;
+		console.log(`  [FAIL] ${version} ${range} → ${got}，应为 ${want}`);
 	}
-	console.log(bad === 0 ? `  ${semverCases.length} 例全通过` : `  ${bad} 例失败`);
-	if (bad > 0) failed++;
 }
+console.log(bad === 0 ? `  ${semverCases.length} 例全通过` : `  ${bad} 例失败`);
+if (bad > 0) failed++;
 
 console.log(
 	`\n${failed === 0 ? "全部通过" : `${failed} 项失败`}` +

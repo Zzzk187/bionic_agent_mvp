@@ -12,83 +12,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findAsar, readDshRuntimeVersion } from "./test/asar-read.mjs";
+import { satisfies } from "./semver-lite.mjs";
 
-/**
- * 最小 semver 范围判断，只覆盖本项目会写的几种形状（>=x.y.z、>x.y.z、^x.y.z、~x.y.z、精确值）。
- * 不去引入 semver 依赖 —— 这个自检脚本要能在没有任何 node_modules 的机器上直接跑。
- */
-function satisfies(version, range) {
-	const parse = (v) => {
-		const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(v).trim());
-		if (!m) return null;
-		return { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] ?? "" };
-	};
-
-	// 预发布标识按 semver 规则逐段比较：纯数字段按数值、数字段小于字母段、
-	// 前面都相同则段数少的更小。整串当字符串比会把 rc.10 判得比 rc.3 小。
-	const cmpPre = (a, b) => {
-		if (a === b) return 0;
-		if (a === "") return 1; // 没有预发布 = 正式版，大于同号预发布
-		if (b === "") return -1;
-		const pa = a.split(".");
-		const pb = b.split(".");
-		for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-			const x = pa[i];
-			const y = pb[i];
-			if (x === undefined) return -1;
-			if (y === undefined) return 1;
-			const nx = /^\d+$/.test(x);
-			const ny = /^\d+$/.test(y);
-			if (nx && ny) {
-				if (+x !== +y) return +x < +y ? -1 : 1;
-			} else if (nx !== ny) {
-				return nx ? -1 : 1; // 数字段 < 字母段
-			} else if (x !== y) {
-				return x < y ? -1 : 1;
-			}
-		}
-		return 0;
-	};
-
-	const cmp = (a, b) => {
-		for (const key of ["major", "minor", "patch"]) if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
-		return cmpPre(a.pre, b.pre);
-	};
-
-	// 上界（不含）：^ 允许最左非零位不变，~ 允许次版本位不变。
-	const upperBound = (op, b) => {
-		if (op === "^") {
-			if (b.major > 0) return { major: b.major + 1, minor: 0, patch: 0, pre: "" };
-			if (b.minor > 0) return { major: b.major, minor: b.minor + 1, patch: 0, pre: "" };
-			return { major: b.major, minor: b.minor, patch: b.patch + 1, pre: "" };
-		}
-		if (op === "~") return { major: b.major, minor: b.minor + 1, patch: 0, pre: "" };
-		return null;
-	};
-
-	const v = parse(version);
-	if (!v) return false;
-	// 允许用 || 连接多个范围
-	return String(range)
-		.split("||")
-		.some((part) => {
-			const m = /^\s*(>=|<=|>|<|\^|~|=)?\s*(\S+)\s*$/.exec(part);
-			if (!m) return false;
-			const op = m[1] ?? "";
-			const bound = parse(m[2]);
-			if (!bound) return false;
-			if (op === ">=") return cmp(v, bound) >= 0;
-			if (op === ">") return cmp(v, bound) > 0;
-			if (op === "<=") return cmp(v, bound) <= 0;
-			if (op === "<") return cmp(v, bound) < 0;
-			if (op === "=" || op === "") return cmp(v, bound) === 0;
-			if (op === "^" || op === "~") {
-				// 同时有下界与上界：>= bound && < upper
-				return cmp(v, bound) >= 0 && cmp(v, upperBound(op, bound)) < 0;
-			}
-			return false;
-		});
-}
 
 // 本脚本直接放在包根（与 package.json 同级）
 const PKG_DIR = dirname(fileURLToPath(import.meta.url));
@@ -318,16 +243,18 @@ if (existsSync(clientLog)) {
 	// 不再依赖 referer —— 实测宿主 iframe 里发起的 fetch 的 referer 是空串
 	// （页面声明了 no-referrer 之类），按 referer 判定会把真实报到误判成噪声。
 	//
-	// 再加一道 Sec-Fetch-Dest：它是浏览器自己加的、页面脚本改不了。
-	// iframe 内嵌 = "iframe"，直接打开页面 = "document"。
-	// 只有新版本面板会记这个字段；老记录没有 dest 时退回只看 UA，
-	// 以免把历史痕迹一次性判成噪声。
+	// 报到分两类，证据强度不同，必须分开判：
+	//   ① source=client-boot（client.js 顶层发出，dest=empty）—— 证明「浏览器半真的被
+	//      宿主求值了」。这条不需要用户点开面板就会自己来，是最硬的自动证据。
+	//   ② dest=iframe —— 证明「面板真的被嵌进去打开过」，只有用户点开才有。
 	const hosted = lines.filter((line) => {
 		if (line.includes("curl/")) return false;
 		let record;
 		try { record = JSON.parse(line); } catch { return false; }
 		const ua = String(record.user_agent || "");
 		if (!/dsh-desktop|deepseek-ai\/dsh|DeepSeekHarness/i.test(ua)) return false;
+		const source = String(record.source ?? "");
+		if (source === "client-boot") return true;
 		const dest = String(record.dest ?? "");
 		// dest 为空 = 旧版本记的，保留兼容；有值就必须是 iframe
 		return dest === "" || dest === "iframe";
@@ -340,24 +267,42 @@ if (existsSync(clientLog)) {
 	const fresh = currentBoot === null ? hosted : hosted.filter((line) => {
 		try { return JSON.parse(line).boot === currentBoot; } catch { return false; }
 	});
-	if (fresh.length > 0) {
-		check("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
+	const parseSafe = (line) => { try { return JSON.parse(line); } catch { return {}; } };
+	const bootReports = fresh.filter((l) => String(parseSafe(l).source ?? "") === "client-boot");
+	const openedReports = fresh.filter((l) => {
+		const r = parseSafe(l);
+		return String(r.source ?? "") !== "client-boot" && String(r.dest ?? "") !== "empty";
+	});
+
+	// ① 浏览器半是否被加载 —— 只要 client.js 被求值，这条就会自己来。
+	if (bootReports.length > 0) {
+		check("浏览器半加载了（client.js 一被求值就自动报到）",
 			true,
-			`当前服务实例 ${currentBoot ?? "(未知)"} 收到 ${fresh.length} 条宿主报到`);
-		console.log("  最近几条宿主报到：");
-		for (const line of fresh.slice(-3)) console.log("    " + line);
-	} else if (hosted.length > 0 && currentBoot !== null) {
-		pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
-			`有 ${hosted.length} 条宿主报到，但都属于更早的服务实例；当前实例 ${currentBoot} 还没收到 —— 说明重启后你还没点开过侧边栏图标`);
+			`当前服务实例 ${currentBoot ?? "(未知)"} 收到 ${bootReports.length} 条 client-boot 报到`);
+	} else if (fresh.length > 0) {
+		pending("浏览器半加载了（client.js 一被求值就自动报到）",
+			`当前实例 ${currentBoot} 还没收到 client-boot 报到；若你刚重启过，刷新一次 DSH 窗口再看`);
+	} else if (currentBoot !== null) {
+		pending("浏览器半加载了（client.js 一被求值就自动报到）",
+			`当前实例 ${currentBoot} 没收到任何报到 —— 若 DSH 已重启且刷新过窗口仍为空，说明宿主跳过了这个插件或 client.js 没被求值`);
 	} else {
-		// 有记录但没有一条来自宿主 iframe：说明还没被嵌进去过（直开面板/脚本探测都不算）。
-		// 这和"没有文件"是同一件事，只是多了一批噪声记录，同样按待确认处理。
-		pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
-			`有 ${lines.length} 条报到，但都不是宿主 iframe（直开面板或脚本探测不算）；等你重启并点开侧边栏图标后再看`);
+		pending("浏览器半加载了（client.js 一被求值就自动报到）", "拿不到当前服务实例，无法判定");
 	}
-} else {
-	pending("浏览器半跑起来了（data/panel-client.log 有宿主 iframe 报到）",
-		"还没有报到：若你尚未重启/尚未点开面板属正常；重启并点开侧边栏图标后仍为空，说明 client.js 在浏览器端没跑起来");
+
+	// ② 面板是否真的被打开过 —— 这条要用户点侧边栏图标，属体验验证，不是安装正确性。
+	if (openedReports.length > 0) {
+		check("面板被打开过（宿主 iframe 报到）",
+			true,
+			`当前实例 ${currentBoot ?? "(未知)"} 收到 ${openedReports.length} 条 iframe 报到`);
+		console.log("  最近几条 iframe 报到：");
+		for (const line of openedReports.slice(-3)) console.log("    " + line);
+	} else if (hosted.length > 0 && currentBoot !== null) {
+		pending("面板被打开过（宿主 iframe 报到）",
+			`有 ${hosted.length} 条历史报到，但都属于更早的服务实例；当前实例 ${currentBoot} 还没收到 —— 点开侧边栏「记忆/任务」图标后即可确认`);
+	} else {
+		pending("面板被打开过（宿主 iframe 报到）",
+			"还没有 iframe 报到（直开面板/脚本探测都不算）；点开侧边栏图标后再看");
+	}
 }
 
 // ── 10. 宿主半的日志（启动失败时最直接的证据）─────────────────────────
