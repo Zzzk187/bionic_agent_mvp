@@ -7,7 +7,8 @@
 // 代码路径真实跑通，而不是靠读代码猜。
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -114,10 +115,18 @@ const dshPort = await new Promise((done) => {
 });
 
 // ---- 起一个独立的管理服务实例（用非默认端口，避免和用户正在跑的 8899 混淆）----
+// 这条用例会真的 POST 一条记忆，所以数据库也必须隔离：BIONIC_DB_PATH 指到临时
+// 目录，否则每跑一次测试就往用户真实的 data/agent.db 里塞一条垃圾。
 const PY = existsSync("D:/Software/Dev/Miniforge/python.exe") ? "D:/Software/Dev/Miniforge/python.exe" : "python";
+const tmpDbDir = mkdtempSync(join(tmpdir(), "bionic-proxy-test-"));
 const child = spawn(PY, ["-m", "app.admin_ui", "--port", String(PORT)], {
 	cwd: PROJECT_DIR,
-	env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
+	env: {
+		...process.env,
+		PYTHONIOENCODING: "utf-8",
+		PYTHONUNBUFFERED: "1",
+		BIONIC_DB_PATH: join(tmpDbDir, "agent.db")
+	},
 	stdio: "ignore",
 	windowsHide: true
 });
@@ -250,6 +259,10 @@ check("dispose 后路由已摘除", !prefixes.has("/bionic-panel"), [...prefixes
 
 server.close();
 await new Promise((r) => setTimeout(r, 300));
+// 临时库连着进程一起收：Windows 上 WAL 句柄可能还没释放，删不掉也不算失败。
+try {
+	rmSync(tmpDbDir, { recursive: true, force: true });
+} catch {}
 
 console.log(`\n反代挂载：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

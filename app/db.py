@@ -1,8 +1,15 @@
+import os
 import sqlite3
 from pathlib import Path
 from contextlib import closing, contextmanager
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "agent.db"
+# BIONIC_DB_PATH lets a second instance (or a test) run against its own database
+# instead of the user's live one. Without it, anything that spins up
+# `python -m app.admin_ui` on another port still writes to data/agent.db.
+DB_PATH = Path(
+    os.environ.get("BIONIC_DB_PATH")
+    or (Path(__file__).resolve().parent.parent / "data" / "agent.db")
+)
 
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)

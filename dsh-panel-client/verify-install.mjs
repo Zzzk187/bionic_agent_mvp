@@ -288,4 +288,3 @@ if (failed.length) {
 	process.exit(1);
 }
 console.log("静态接线全部正确。若侧边栏仍无图标，问题在浏览器端：看 DSH 窗口的 DevTools Console。");
-console.log("静态接线全部正确。若侧边栏仍无图标，问题在浏览器端：看 DSH 窗口的 DevTools Console。");

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # 让脚本式启动（`python app/admin_ui.py`）也能 import app.*。
@@ -35,7 +36,23 @@ from app import embeddings as emb  # noqa: E402
 
 HTML_PATH = Path(__file__).resolve().with_name("admin_ui.html")
 
-app = FastAPI(title="Bionic Agent 管理面板", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app):
+    """建库/迁移放在启动时做，而不是等某个接口先撞上 no such table。
+
+    MCP 那边每个工具入口都调 `_ensure_db()`，面板这边原先没有对应动作 —— 于是
+    全新机器上（data/agent.db 还不存在）`/api/stats` 直接 500，而首页又能正常
+    打开，看症状像前端问题。`init_db()` 本身幂等，重复调用无副作用。
+    """
+    try:
+        core._ensure_db()
+    except Exception as exc:  # noqa: BLE001 —— 建库失败要让面板起来后能显示错误，而不是进程消失
+        print(f"[bionic-agent-admin] 初始化数据库失败：{exc}", file=sys.stderr)
+    yield
+
+
+app = FastAPI(title="Bionic Agent 管理面板", version="0.1.0", lifespan=_lifespan)
 
 # 允许本机页面跨端口访问。
 #

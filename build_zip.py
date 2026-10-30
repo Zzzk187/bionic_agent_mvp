@@ -1,8 +1,9 @@
 """Build the distributable ZIP (runnable files only).
 
 Excludes the user's private live database (data/agent.db, data/backups/*) and
-Python caches. A fresh deployment runs `python -m app.migrate_phase5` to create
-or upgrade its own database idempotently.
+Python caches. A fresh deployment creates or upgrades its own database on first
+launch: `app/db.py` runs the idempotent migration itself (no separate migrate
+script is shipped).
 """
 import zipfile
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "dist" / "bionic-agent-mcp.zip"
 
-INCLUDE_DIRS = ["app"]
+INCLUDE_DIRS = ["app", "dsh-panel-client"]
 INCLUDE_FILES = [
     "requirements.txt",
     "pyproject.toml",

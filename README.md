@@ -250,7 +250,8 @@ bionic_agent_mvp/
 ## 可移植 / 传播要点
 
 - **路径零硬编码**：所有路径基于 `Path(__file__).resolve()`，换机器只改 MCP 配置里的绝对路径。
-- **数据库随项目走**：`data/agent.db` 在首次启动时自动建库并执行幂等迁移；新机器拿到代码即可跑，无需手工建表。
+- **数据库随项目走**：`data/agent.db` 在首次启动时自动建库并执行幂等迁移；新机器拿到代码即可跑，无需手工建表。MCP 入口在每次工具调用前 `_ensure_db()`，管理面板在 FastAPI `lifespan` 里做同一件事——所以空目录直接起面板也不会出现 `no such table`。
+- **库位置可覆盖**：`BIONIC_DB_PATH=/path/to/agent.db` 能换掉默认的 `data/agent.db`。跑第二实例、做测试、或想把库放到同步盘时用它，别去改 `app/db.py`（自检脚本 `dsh-panel-client/test/proxy-mount.mjs` 就是靠它把测试写入隔离到临时目录的）。
 - **迁移安全**：`app/db.py` 的 `_migrate_phase5` 仅幂等加列/建表，从不 DROP/重建；重复运行无副作用。
 - **打包**：`python build_zip.py` 生成可分发的 ZIP（自动排除 `data/agent.db`、`__pycache__` 等私有/临时文件）。
 
