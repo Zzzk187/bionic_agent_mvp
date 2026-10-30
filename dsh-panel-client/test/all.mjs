@@ -27,6 +27,12 @@ const STEPS = [
 		optional: true
 	},
 	{
+		name: "profile 层叠与 config",
+		script: "test/layer-config.mjs",
+		// 需要宿主 asar 解包出的 dsh-app-boot；换台机器就没有，算 SKIP 不算坏
+		optional: true
+	},
+	{
 		name: "同源反代挂载",
 		script: "test/proxy-mount.mjs",
 		// 需要真起一个 python 管理服务，环境缺 python 时算 SKIP 不算坏
