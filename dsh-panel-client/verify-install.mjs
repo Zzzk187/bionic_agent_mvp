@@ -11,7 +11,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connect } from "node:net";
 import { findAsar, readDshRuntimeVersion } from "./test/asar-read.mjs";
 
 /**
@@ -183,36 +182,53 @@ if (installedOk) {
 }
 
 // ── 7. 管理服务是否在跑（插件宿主半的产物）──────────────────────────
-function isListening(port, timeoutMs = 700) {
-	return new Promise((done) => {
-		const socket = connect({ host: "127.0.0.1", port });
-		let settled = false;
-		const finish = (up) => {
-			if (settled) return;
-			settled = true;
-			socket.destroy();
-			done(up);
-		};
-		socket.setTimeout(timeoutMs);
-		socket.once("connect", () => finish(true));
-		socket.once("timeout", () => finish(false));
-		socket.once("error", () => finish(false));
-	});
+// 管理服务端口不能写死 8899。
+// 插件宿主半在「8899 已被别的程序占着、且形状不像本服务」时会自动往后换端口
+// （pickFreePort），所以这里要按同样的思路扫一段端口，用 /api/stats 的响应形状
+// 认出「哪个才是我们的」，而不是假定它在 8899。
+// 形状判据与 lib/index.js 的 identifyAdmin() 保持一致：ok===true 且 data.memories_total 存在。
+const PORT_SCAN = [8899, 8900, 8901, 8902, 8903, 8904, 8905, 8906, 8907, 8908];
+
+/** 探一个端口上是不是我们的管理服务；是则返回 {url, data}。 */
+async function probeAdmin(candidatePort, timeoutMs = 2500) {
+	const url = `http://127.0.0.1:${candidatePort}`;
+	try {
+		const res = await fetch(`${url}/api/stats`, { signal: AbortSignal.timeout(timeoutMs) });
+		if (!res.ok) return undefined;
+		const body = await res.json();
+		if (body?.ok === true && body?.data !== undefined && "memories_total" in body.data) {
+			return { url, data: body.data };
+		}
+	} catch {
+		/* 端口没人听 / 不是 HTTP / 不是我们的 JSON：下一个 */
+	}
+	return undefined;
 }
 
-const adminUrl = "http://127.0.0.1:8899";
-const port = Number(new URL(adminUrl).port || 80);
-const listening = await isListening(port);
-check(`管理服务在 ${port} 监听`, listening, listening ? adminUrl : "没在跑：DSH 可能还没重启，或插件宿主半没生效");
-
-if (listening) {
-	try {
-		const res = await fetch(`${adminUrl}/api/stats`);
-		const body = await res.json();
-		check("GET /api/stats 正常", res.ok && body.ok === true, JSON.stringify(body.data ?? {}).slice(0, 120));
-	} catch (error) {
-		check("GET /api/stats 正常", false, String(error?.message ?? error));
+let adminUrl;
+let adminData;
+for (const candidate of PORT_SCAN) {
+	const hit = await probeAdmin(candidate);
+	if (hit) {
+		adminUrl = hit.url;
+		adminData = hit.data;
+		break;
 	}
+}
+
+if (adminUrl) {
+	check(
+		"管理服务在监听",
+		true,
+		`${adminUrl}${adminUrl.endsWith(":8899") ? "" : "（8899 被占，插件自动换到了这个端口）"}`
+	);
+	check("GET /api/stats 正常", true, JSON.stringify(adminData).slice(0, 120));
+} else {
+	check(
+		"管理服务在监听",
+		false,
+		`${PORT_SCAN[0]}–${PORT_SCAN[PORT_SCAN.length - 1]} 都没探到：DSH 可能还没重启，或插件宿主半没生效`
+	);
 }
 
 // ── 8. 宿主半的启动痕迹（判断「插件到底加载没加载」的唯一直接证据）──────
@@ -279,14 +295,16 @@ if (bootOk) {
 
 // 先取当前服务实例的 boot id：痕迹文件是跨进程累积的，不比对就会把
 // 「上一批进程里点开过面板」误当成本次证据（这坑自己踩过）。
-try {
-	const res = await fetch(`${adminUrl}/api/stats`, { signal: AbortSignal.timeout(3000) });
-	const body = await res.json();
-	if (res.ok && body?.ok === true && typeof body?.data?.boot === "string") {
-		liveBootId = body.data.boot;
+if (adminUrl) {
+	try {
+		const res = await fetch(`${adminUrl}/api/stats`, { signal: AbortSignal.timeout(3000) });
+		const body = await res.json();
+		if (res.ok && body?.ok === true && typeof body?.data?.boot === "string") {
+			liveBootId = body.data.boot;
+		}
+	} catch {
+		/* 服务没起来时 liveBootId 保持 null，第 9 项退化为"只看有没有宿主报到" */
 	}
-} catch {
-	/* 服务没起来时 liveBootId 保持 null，第 9 项退化为"只看有没有宿主报到" */
 }
 
 const clientLog = resolve(PKG_DIR, "..", "data", "panel-client.log");
