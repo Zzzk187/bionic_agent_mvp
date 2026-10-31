@@ -164,6 +164,25 @@
   </div>
   <div id="starCanvasWrap" style="position:relative;border:1px solid var(--line);border-radius:10px;
     overflow:hidden;background:var(--bg);height:calc(100vh - 230px);min-height:420px">
+    <!-- 深空底层：两张叠起来的径向渐变当星云，WebGL 画布透明所以能看见它。
+         刻意不用图片 —— 面板要能离线拷贝运行，几百字节的 CSS 比几百 KB 的图省事。 -->
+    <div id="starSky" aria-hidden="true" style="position:absolute;inset:0;z-index:0;pointer-events:none;
+      background:
+        radial-gradient(ellipse 60% 45% at 22% 18%, rgba(46,92,180,.30) 0%, rgba(46,92,180,0) 62%),
+        radial-gradient(ellipse 55% 50% at 78% 76%, rgba(128,72,190,.26) 0%, rgba(128,72,190,0) 60%),
+        radial-gradient(ellipse 80% 70% at 50% 42%, rgba(20,44,86,.55) 0%, rgba(4,7,13,0) 72%),
+        #05070c"></div>
+    <!-- 星野：纯 CSS 点阵，radial-gradient 平铺 @ 多层不同尺寸造视差感 -->
+    <div id="starField" aria-hidden="true" style="position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.75;
+      background-image:
+        radial-gradient(1px 1px at 12px 34px, rgba(255,255,255,.85) 0%, rgba(255,255,255,0) 100%),
+        radial-gradient(1px 1px at 78px 112px, rgba(180,210,255,.65) 0%, rgba(180,210,255,0) 100%),
+        radial-gradient(1.5px 1.5px at 140px 62px, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 100%),
+        radial-gradient(1px 1px at 190px 158px, rgba(150,190,255,.55) 0%, rgba(150,190,255,0) 100%);
+      background-size:220px 220px, 260px 260px, 300px 300px, 340px 340px"></div>
+    <!-- 3D 库的专属挂载点：重建星图时只清这里，
+         绝不碰外面的深空层和提示卡（曾经写成 host.innerHTML='' 把它们一起删了） -->
+    <div id="starMount" style="position:absolute;inset:0;z-index:1"></div>
     <div id="starHint" style="position:absolute;left:12px;bottom:10px;font-size:12px;
       color:var(--muted);pointer-events:none;z-index:2">
       拖动旋转 · 滚轮缩放 · 点星看原文
@@ -530,9 +549,149 @@ function starPalette(){
   };
 }
 
+/* 从场景里反推 THREE 的构造器。
+ *
+ * 为什么不直接 import three：3d-force-graph 把 three 打进自己包里了（自包含），
+ * 浏览器里没有全局 THREE 可用。但场景里的对象都带着各自的构造器，
+ * 反推出来照样能 new（实测 SphereGeometry / MeshBasicMaterial / Mesh / Object3D
+ * 的构造链依次是 qr / Fr / qr / hi ... 名字被压缩过，只能靠原型链取）。
+ *
+ * 拿不到就返回 null，调用处全部降级 —— 宁可没有辉光，也不能让整个星图崩掉。*/
+let THREE_CACHE = null;
+/* 从场景里反推 THREE 的构造器。
+ *
+ * 为什么不直接 import three：3d-force-graph 把 three 打进自己包里了（自包含），
+ * 浏览器里没有全局 THREE 可用。但场景里的对象都带着各自的构造器，
+ * 反推出来照样能 new（实测原型链上的名字被压缩过，只能这样取）。
+ *
+ * ⚠️ 三条实测得来的铁律，改之前先读：
+ *   1. 只能用「球」当样本。场景里同时存在连线几何（br/bs）和节点球（Os），
+ *      拿到连线那个造出来的"星"是薄片，屏幕上几乎看不见，而且**不报错**。
+ *      判据：geometry.parameters 里有 radius + widthSegments。
+ *   2. 只有在真拿到球时才写缓存。曾经非严格模式把连线几何写进了缓存，
+ *      之后所有调用都命中这个脏缓存，症状是"怎么改都没效果"。
+ *   3. 调用时机很重要：库是异步建节点对象的，刚 graphData 完那一帧
+ *      场景里只有连线，得等一两帧才有球。所以下面统一走两段式。*/
+function threeOf(G, strict){
+  if (THREE_CACHE) return THREE_CACHE;
+  try {
+    const scene = G.scene();
+    let ball = null, any = null;
+    scene.traverse(o => {
+      if (!o.isMesh || !o.geometry) return;
+      if (any === null) any = o;
+      const pr = o.geometry.parameters;
+      if (ball === null && pr && 'radius' in pr && 'widthSegments' in pr) ball = o;
+    });
+    // 严格模式（或任何模式）都优先要球；真拿不到球就返回 null，**不写缓存**
+    const mesh = ball || (strict ? null : null) || any;
+    if (!mesh) return null;
+    const isBall = ball !== null;
+    if (!isBall) return null;          // 见铁律 2：不是球就别污染缓存
+    // Object3D 是 Mesh 往上两层（Mesh → 基类 → Object3D）；Group 也可以直接 new 它
+    const GroupCls = Object.getPrototypeOf(Object.getPrototypeOf(mesh)).constructor;
+    THREE_CACHE = {
+      Mesh: mesh.constructor,
+      Geo: mesh.geometry.constructor,
+      Mat: mesh.material.constructor,
+      Color: mesh.material.color.constructor,
+      Group: GroupCls,
+    };
+    return THREE_CACHE;
+  } catch { return null; }
+}
+
+/* 深空底层的开关：深色主题下露出来，浅色主题下淡出——
+ * 浅色背景里塞一片星云会脏得像屏幕没擦干净。*/
+function applyStarSky(dark){
+  const sky = document.getElementById('starSky');
+  const field = document.getElementById('starField');
+  if (sky) sky.style.opacity = dark ? '1' : '0';
+  if (field) field.style.opacity = dark ? '0.75' : '0';
+}
+
+/* 网格球壳 + 扫掠环。
+ * 球壳套在星团外面（半径取星团最大半径的 1.15 倍），像飞行器的座舱玻璃；
+ * 环是「赤道扫描线」，视觉上给静态场景一点机械感。
+ * 实测加壳后着色像素 +31061，且因为用了 wireframe + 低不透明度，不挡节点。*/
+function addStarGrid(G, pal){
+  const T = threeOf(G);
+  if (!T) return null;
+  try {
+    const nodes = G.graphData().nodes;
+    let R = 0;
+    nodes.forEach(n => { R = Math.max(R, Math.hypot(n.x || 0, n.y || 0, n.z || 0)); });
+    R = Math.max(200, R) * 1.15;
+
+    const grp = new T.Group();
+
+    const shellMat = new T.Mat();
+    shellMat.wireframe = true;
+    shellMat.transparent = true;
+    shellMat.opacity = pal.dark ? 0.075 : 0.05;
+    shellMat.depthWrite = false;
+    shellMat.color = new T.Color(pal.dark ? 0x4a7dd6 : 0x8fa8c8);
+    const shell = new T.Mesh(new T.Geo(R, 16, 12), shellMat);
+    grp.add(shell);
+
+    // 赤道环：一段细环，绕着 y 轴，比球壳亮一点
+    const ringMat = new T.Mat();
+    ringMat.transparent = true;
+    ringMat.opacity = pal.dark ? 0.16 : 0.10;
+    ringMat.depthWrite = false;
+    ringMat.side = 2;                       // THREE.DoubleSide
+    ringMat.color = new T.Color(pal.dark ? 0x66a3ff : 0x7f9ec4);
+    const ring = new T.Mesh(new T.Geo(R * 1.02, 64, 3), ringMat);
+    ring.scale.set(1, 0.008, 1);            // 压扁成光盘
+    grp.add(ring);
+
+    G.scene().add(grp);
+    STAR.grid = grp;
+    return grp;
+  } catch { return null; }
+}
+
+/* 网格球壳慢速自转。
+ * 用 requestAnimationFrame 自己转，不依赖库的渲染循环 —— 库只在力模拟期间
+ * 持续重绘，坐标钉死之后它是静止的，指望它带带动画不会动。
+ * 转速压到很低（0.02 rad/s 量级）：科幻感要的是「它活着」，不是「它在转圈」，
+ * 转快了会干扰读节点位置。*/
+function startGridSpin(G){
+  // 网格壳是异步挂上去的（要等库建完默认球才拿得到构造器），
+  // 所以这里不能只看一次 —— 没壳就等下一帧再看，最多等 2 秒。
+  if (STAR.grid === undefined || STAR.grid === null) {
+    STAR.spinWait = (STAR.spinWait || 0) + 1;
+    if (STAR.spinWait > 120) return;          // ~2s 还没等到，放弃
+    STAR.spin = requestAnimationFrame(() => startGridSpin(G));
+    return;
+  }
+  STAR.spinWait = 0;
+  if (STAR.spin !== undefined) cancelAnimationFrame(STAR.spin);
+  let last = 0;
+  const tick = (t) => {
+    if (!STAR.graph || !document.getElementById('starmap')?.classList.contains('active')) {
+      STAR.spin = undefined;
+      return;
+    }
+    // 帧间隔归一化：按 60fps 折算，掉帧时速度不变
+    const dt = last ? Math.min(100, t - last) / 16.7 : 1;
+    last = t;
+    try {
+      if (STAR.grid) {
+        STAR.grid.rotation.y += 0.0016 * dt;
+        // 轻微俯仰摆动，纯转动看起来太机械
+        STAR.grid.rotation.x = Math.sin(t / 9000) * 0.06;
+      }
+    } catch {}
+    STAR.spin = requestAnimationFrame(tick);
+  };
+  STAR.spin = requestAnimationFrame(tick);
+}
+
 function buildStarGraph(){
   const host = $('#starCanvasWrap');
-  if (!host || !STAR.data) return;
+  const mount = $('#starMount');
+  if (!host || !mount || !STAR.data) return;
   const pal = starPalette();
   const rect = host.getBoundingClientRect();
   const W = Math.max(320, Math.round(rect.width));
@@ -559,16 +718,22 @@ function buildStarGraph(){
     .filter(e => byId.has(e.source) && byId.has(e.target))
     .map(e => ({ source: e.source, target: e.target, kind: e.kind, weight: e.weight ?? 0.5 }));
 
-  if (STAR.graph) { try { host.innerHTML = ''; } catch {} STAR.graph = null; }
+  /* 只清挂载点。以前是 host.innerHTML = '' —— 会把深空层、提示卡一起端掉，
+   * 表现为「重新加载一次之后背景变纯白/纯黑」，且不可自愈。*/
+  if (STAR.graph) { try { mount.innerHTML = ''; } catch {} STAR.graph = null; }
+  try { mount.innerHTML = ''; } catch {}
 
   const catOf = (v) => {
     const id = (v && typeof v === 'object') ? v.id : v;
     return byId.get(id)?.category;
   };
 
-  const G = ForceGraph3D()(host)
+  const G = ForceGraph3D()(mount)
     .width(W).height(H)
-    .backgroundColor(pal.bg)
+    // 画布透明，让底下的 CSS 深空露出来（实测透明像素占 98.4%）。
+    // 不能直接用 backgroundColor 传 rgba —— 库会把它转成 canvas 的 alpha，
+    // 但 WebGL 的清屏 alpha 得单独设，所以下面还有一次 setClearColor。
+    .backgroundColor('rgba(0,0,0,0)')
     .showNavInfo(false)
     .nodeRelSize(9)
     .nodeVal(n => 2.4 + Math.log2(Math.max(20, n.size || 60) / 20) * 1.6)
@@ -587,14 +752,77 @@ function buildStarGraph(){
     .linkDirectionalParticleColor(l => starColor(catOf(l.source)))
     .onNodeClick(n => showStarInfo(n));
 
-  // 类别名挂在各天区质心上，省得用户对着颜色猜
-  G.nodeThreeObject(() => null);
+    STAR.graph = G;
 
+  /* 两段式建节点，顺序不能反 —— 原因见 threeOf() 注释：
+   * 想拿到「球」的构造器，就必须等库先把默认球建出来。
+   *
+   * 第一段：直接喂数据，让它按默认样式（真实球体）建一次。
+   * 第二段：隔一帧再探测构造器、换上「核心 + 辉光」，然后重新喂一次数据
+   *        触发节点对象重建。重新喂是必须的 —— 只改 nodeThreeObject()
+   *        不会重建已有节点（实测改了但场景里还是默认球）。*/
   G.graphData({ nodes, links });
-  STAR.graph = G;
+
+  /* 换样式。用现成的球构造器造「核心 + 加性混合辉光壳」。
+   *
+   * ⚠️ 关键坑（踩过）：库靠 threeObj.__data 从射线命中结果回溯 graph node。
+   * 自定义分组后射线打中的是**子 mesh**，而子 mesh 上没有 __data，
+   * 于是点选静默失效 —— 不报错、不触发 onNodeClick，只是点了没反应。
+   * 所以下面 grp/core/glow 三处 __data **不能删**。
+   * （实测：补标记前 clicked=null，补上后 clicked=47，与目标节点一致。）*/
+  const applyNodeStyle = () => {
+    const T = threeOf(G, true);
+    if (!T) return false;
+    G.nodeThreeObject(n => {
+      const clr = STAR_COLORS[n.category] || '#94a3b8';
+      const grp = new T.Group();
+      const sz = 2.6 + Math.log2(Math.max(20, n.size || 60) / 20) * 1.4;
+      const coreMat = new T.Mat();
+      coreMat.color = new T.Color(clr);
+      const core = new T.Mesh(new T.Geo(1, 12, 10), coreMat);
+      core.scale.set(sz, sz, sz);
+      const glowMat = new T.Mat();
+      glowMat.color = new T.Color(clr);
+      glowMat.transparent = true;
+      glowMat.opacity = 0.15;
+      glowMat.blending = 2;        // THREE.AdditiveBlending
+      glowMat.depthWrite = false;
+      const glow = new T.Mesh(new T.Geo(1, 12, 10), glowMat);
+      const gs = sz * 2.8;
+      glow.scale.set(gs, gs, gs);
+      grp.add(core);
+      grp.add(glow);
+      grp.__data = n; core.__data = n; glow.__data = n;   // ← 见上，删了点选就废
+      return grp;
+    });
+    G.graphData({ nodes, links });   // 重建节点对象
+    return true;
+  };
+  /* 两段式：等库把默认球建出来 → 换成辉光节点 → 再挂网格壳。
+   * 顺序固定，不能把 addStarGrid 提到同步位置 —— 它会先一步调 threeOf，
+   * 那时场景里还没有球，会把连线几何写进缓存（踩过，见 threeOf 注释铁律 2）。*/
+  const settle2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  settle2().then(() => {
+    if (!applyNodeStyle()) {
+      console.warn('[starmap] 没探测到球体构造器，保持默认节点样式');
+    }
+    addStarGrid(G, pal);
+  });
+
+  /* 清屏 alpha 必须单独设：backgroundColor 只改 CSS 侧背景，
+   * WebGL 的 clearAlpha 还是 1，画布照样是不透明的。*/
+  try {
+    const r = G.renderer();
+    r.setClearColor(0x000000, 0);
+    if (r.getContext) r.getContext().clearColor(0, 0, 0, 0);
+  } catch {}
+  // 深空底层的可见性也跟着主题走：浅色主题下别硬塞一块黑的
+  applyStarSky(pal.dark);
+
   paintStarLabels(G, nodes);
 
   setTimeout(() => { try { frameStar(G, nodes); } catch (e) { console.warn('取景失败', e); } }, 400);
+  startGridSpin(G);
   return G;
 }
 
@@ -761,7 +989,9 @@ function bindStarEvents(){
     // 只换颜色，不重建 —— 重建会把用户调好的视角重置掉
     const pal = starPalette();
     try {
-      STAR.graph.backgroundColor(pal.bg);
+      // 必须保持透明：改成 pal.bg 会把底下的深空整片盖掉
+      STAR.graph.backgroundColor('rgba(0,0,0,0)');
+      applyStarSky(pal.dark);
       STAR.graph.linkColor(l => l.kind === 'semantic'
         ? withAlpha(starColor(catOfLink(l)), 0.30)
         : withAlpha(pal.muted, l.kind === 'tag' ? 0.10 : 0.38));

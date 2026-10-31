@@ -52,7 +52,13 @@ check(
 check("3D 渲染容器存在（不再是自己手画 canvas）", /id="starCanvasWrap"/.test(html));
 check(
 	"用现成 3D 图库而不是手写投影",
-	/ForceGraph3D\(\)\(host\)/.test(html) && /3d-force-graph/.test(html),
+	/ForceGraph3D\(\)\(mount\)/.test(html) && /3d-force-graph/.test(html),
+);
+check(
+	"3D 库挂在专用子容器上（清屏不会误删深空层）",
+	/id="starMount"/.test(html) && /\$\('#starMount'\)/.test(html) && /mount\.innerHTML\s*=\s*''/.test(html),
+	// 历史 bug：直接清 host.innerHTML 会连 #starSky/#starField/#starHint 一起删，
+	// 表现是「点一次重新加载，星空背景就永久没了」。
 );
 check(
 	"库文件本地托管（不依赖 CDN，离线可用）",
@@ -84,11 +90,44 @@ check(
 );
 check(
 	"3D 场景颜色取自 CSS 变量（跟随主题，不写死）",
-	/getPropertyValue/.test(html) && /bg:\s*get\('--bg'/.test(html) && /backgroundColor\(pal\.bg\)/.test(html),
+	/getPropertyValue/.test(html) && /bg:\s*get\('--bg'/.test(html),
+);
+check(
+	"画布保持透明并单独清屏 alpha（深空由 CSS 层提供）",
+	/backgroundColor\('rgba\(0,0,0,0\)'\)/.test(html) && /setClearColor\(0x0+,?\s*0\)/.test(html),
+	// 只设 backgroundColor 不够：库改的是 CSS 侧背景，WebGL 的清屏 alpha
+	// 得另外 setClearColor，否则深空层被一层不透明黑盖住。
 );
 check(
 	"主题切换只换颜色不重建（保留用户调好的视角）",
-	/MutationObserver[\s\S]{0,400}?backgroundColor\(pal\.bg\)/.test(html),
+	/MutationObserver[\s\S]{0,600}?applyStarSky\(pal\.dark\)/.test(html),
+);
+
+/* ── 本轮（科幻化）修掉的四个坑，全部实测确认，加断言防回归 ── */
+check(
+	"取几何构造器时只认球（否则拿到连线几何，造出的星是看不见的薄片）",
+	/'radius' in pr && 'widthSegments' in pr/.test(html),
+	// 历史 bug：原实现取遍历到的第一个 mesh，而连线几何排在球前面，
+	// 结果 Geo 被缓存成连线构造器，节点渲染成薄片，lit 像素只有 43（画布 58 万），
+	// 且完全不报错。
+);
+check(
+	"非球几何绝不写进构造器缓存（脏缓存会让后续修复全部失效）",
+	/if \(!isBall\) return null;/.test(html),
+	// 历史 bug：addStarGrid 同步调 threeOf 时节点还没建好，把连线几何写进
+	// 模块级缓存，之后异步的 applyNodeStyle 命中脏缓存 ——「怎么改都没效果」。
+);
+check(
+	"自定义节点的每个子 mesh 都补 __data（否则点选静默失效）",
+	/grp\.__data = n; core\.__data = n; glow\.__data = n;/.test(html),
+	// 库靠 __data 从射线命中回溯 graph node；子 mesh 上没有就点了没反应，
+	// 不报错也不触发 onNodeClick。实测补前 clicked=null，补后 clicked=47。
+);
+check(
+	"网格壳是异步挂的，自转要等它出现（不能只看一次）",
+	/STAR\.spinWait/.test(html) && /requestAnimationFrame\(\(\) => startGridSpin\(G\)\)/.test(html),
+	// 历史 bug：addStarGrid 挪进异步后，同步启动的 startGridSpin 看不见壳，
+	// 星空球壳挂上去但永不旋转（实测 spin=false）。
 );
 check(
 	"点星弹信息卡并可跳回记忆列表",
