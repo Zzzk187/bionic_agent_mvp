@@ -468,7 +468,7 @@ function loadStarLib(){
   if (window.ForceGraph3D) { STAR.libReady = true; return Promise.resolve(true); }
   return new Promise((resolve) => {
     const s = document.createElement('script');
-    s.src = '/static/3d-force-graph.min.js';
+    s.src = withBase('/static/3d-force-graph.min.js');
     s.onload = () => {
       STAR.libReady = typeof window.ForceGraph3D === 'function';
       if (!STAR.libReady) STAR.libError = '文库加载后仍找不到 ForceGraph3D';

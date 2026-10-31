@@ -335,6 +335,13 @@ export function apply(ctx, config = {}) {
 		let restarts = 0;
 		let restartTimer = null;
 		let stopping = false;
+		// 复用别人的实例时我们手上没有 child 句柄，watch() 挂不上 ——
+		// 那个实例一旦停掉，面板就永远白屏到下次重启 DSH，而这恰好是最容易发生的
+		// （用户手动起的服务、上次 DSH 留下的孤儿进程，都算"别人"）。
+		// 所以复用分支额外挂一个 HTTP 健康看护：发现服务没了就自己接管启动。
+		let healthTimer = null;
+		let borrowed = false;
+		let starting = false;
 
 		function watch(proc) {
 			const child = proc?.child;
@@ -367,14 +374,51 @@ export function apply(ctx, config = {}) {
 			});
 		}
 
+		const HEALTH_INTERVAL = 5000;
+		function ensureHealthWatch() {
+			if (healthTimer !== null) return;
+			healthTimer = setInterval(async () => {
+				if (disposed || stopping) {
+					clearInterval(healthTimer);
+					healthTimer = null;
+					return;
+				}
+				if (starting || !borrowed) return;
+				const who = await identifyAdmin(port);
+				if (who.ours) return;
+				bootTrace(
+					ctx,
+					`复用中的管理服务已经不在了（${who.reason}），改为自己拉起`,
+					"warn"
+				);
+				clearInterval(healthTimer);
+				healthTimer = null;
+				borrowed = false;
+				void startOnce();
+			}, HEALTH_INTERVAL);
+			healthTimer.unref?.();
+		}
+
 		const startOnce = async () => {
+			if (starting) return;
+			starting = true;
+			try {
+				await startOnceInner();
+			} finally {
+				starting = false;
+			}
+		};
+
+		const startOnceInner = async () => {
 			// 端口有人听时，先问清楚"是不是我们自己"。
 			// 直接复用会在别的服务占着 8899 时把面板接到别人页面上——
 			// 现象是打开后一片乱码，且没有任何报错，最难查。
 			if (await isListening(port)) {
 				const who = await identifyAdmin(port);
 				if (who.ours) {
-					bootTrace(ctx, `${adminUrl} 已在运行，复用现有服务`);
+					bootTrace(ctx, `${adminUrl} 已在运行，复用现有服务（会盯着它，停了就自己接管）`);
+					borrowed = true;
+					ensureHealthWatch();
 					return;
 				}
 				const free = await pickFreePort(port + 1);
@@ -382,6 +426,12 @@ export function apply(ctx, config = {}) {
 				port = free;
 				adminUrl = `http://127.0.0.1:${free}`;
 			}
+			// 自己接管后就交给 watch() 按进程 exit 监督，HTTP 看护退场，避免两套机制打架。
+			if (healthTimer !== null) {
+				clearInterval(healthTimer);
+				healthTimer = null;
+			}
+			borrowed = false;
 			launched = launchAdmin(merged, projectDir, port, traceLogDir);
 			if (launched.error !== undefined) {
 				bootTrace(ctx, `启动管理服务失败：${launched.error?.message ?? launched.error}`, "warn");
@@ -415,6 +465,10 @@ export function apply(ctx, config = {}) {
 			if (restartTimer !== null) {
 				clearTimeout(restartTimer);
 				restartTimer = null;
+			}
+			if (healthTimer !== null) {
+				clearInterval(healthTimer);
+				healthTimer = null;
 			}
 			// 只收自己起的；别人起的实例不碰。
 			launched?.kill();

@@ -35,6 +35,13 @@ const STEPS = [
 		optional: false
 	},
 	{
+		name: "星图在反代前缀下能取到图库",
+		script: "test/starmap-prefix.mjs",
+		// 直连 8899 时 BASE 是空串，写死不写死看不出区别；DSH 里永远带 /bionic-panel 前缀，
+		// 那一刻写死根路径就会 404、星图永远出不来。这条专门钉住它。
+		optional: true
+	},
+	{
 		name: "宿主半 cordis 端到端",
 		script: "test/host-cordis.mjs",
 		optional: true
@@ -61,6 +68,13 @@ const STEPS = [
 		name: "真宿主 WebServer 反代",
 		script: "test/host-webserver.mjs",
 		// 要宿主自己的 cordis + dsh-host-webserver；换机器没有就 SKIP
+		optional: true
+	},
+	{
+		name: "复用别人的实例后仍会看护",
+		script: "test/adopt.mjs",
+		// 复用时没有 child 句柄，watch() 挂不上；那条服务停掉会白屏到下次重启 DSH。
+		// 这条钉住「会自己接管」。
 		optional: true
 	},
 	{
