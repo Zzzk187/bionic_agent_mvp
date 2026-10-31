@@ -5,17 +5,43 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bionic Agent 管理面板</title>
 <style>
+  /* 配色全部走变量，三种来源：
+       1. 默认（下面 :root）= 深色，独立打开面板时用；
+       2. [data-theme="light"] = 浅色；
+       3. 跟随 DSH：脚本从同源父窗口读 --dsw-alias-* 令牌，写成 :root 上的内联变量，
+          内联样式优先级高于这里的规则，所以不用为它再写一套选择器。
+     新增颜色一律先加变量，不要在规则里写死 —— 否则浅色主题下会出现看不清的死角。 */
   :root{
     --bg:#0f1117; --panel:#171a23; --panel2:#1e222e; --line:#2a2f3c;
     --txt:#e6e9ef; --muted:#8a92a6; --accent:#5b8cff; --accent2:#39d0a3;
     --warn:#ffb454; --danger:#ff6b6b; --ok:#39d0a3;
     --chip:#222838;
+    --header1:#171a23; --header2:#13161e;
+    --tag-bg:#20283b; --tag-fg:#9db4ff;
+    --pill-protected-bg:#33291a; --pill-review-bg:#16312a;
+    --on-warn:#222222;
+    --btn-bg:#2f66e0; --btn-fg:#ffffff; --on-danger:#ffffff;
+    --toast-err-fg:#ffd2d2; --toast-ok-fg:#cffaec;
+    --mask:rgba(0,0,0,.6); --shadow:rgba(0,0,0,.4);
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f8fa; --panel:#ffffff; --panel2:#f2f4f7; --line:#e1e5ec;
+    --txt:#1a1d24; --muted:#68707f; --accent:#3b6ef5; --accent2:#0f9d76;
+    --warn:#b45309; --danger:#dc2626; --ok:#0f9d76;
+    --chip:#eef1f6;
+    --header1:#ffffff; --header2:#f4f6fa;
+    --tag-bg:#e8edfa; --tag-fg:#3b5bdb;
+    --pill-protected-bg:#fdf1dc; --pill-review-bg:#dff5ec;
+    --on-warn:#ffffff;
+    --btn-bg:#2f66e0; --btn-fg:#ffffff; --on-danger:#ffffff;
+    --toast-err-fg:#7f1d1d; --toast-ok-fg:#065f46;
+    --mask:rgba(20,24,32,.42); --shadow:rgba(20,24,32,.16);
   }
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
     background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
   header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);
-    background:linear-gradient(180deg,#171a23,#13161e)}
+    background:linear-gradient(180deg,var(--header1),var(--header2))}
   header h1{font-size:16px;margin:0;font-weight:600}
   header .stats{margin-left:auto;display:flex;gap:14px;color:var(--muted);font-size:12px}
   header .stats b{color:var(--txt)}
@@ -30,12 +56,12 @@
     border-radius:7px;padding:7px 10px;font-size:13px;outline:none}
   input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   textarea{resize:vertical;font-family:inherit}
-  button{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:7px 14px;
+  button{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:7px;padding:7px 14px;
     cursor:pointer;font-size:13px;font-weight:500}
   button.ghost{background:var(--chip);color:var(--txt)}
-  button.danger{background:var(--danger)}
-  button.ok{background:var(--ok)}
-  button.warn{background:var(--warn);color:#222}
+  button.danger{background:var(--danger);color:var(--on-danger)}
+  button.ok{background:var(--ok);color:var(--on-danger)}
+  button.warn{background:var(--warn);color:var(--on-warn)}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
   .mem{border-left:3px solid var(--accent)}
   .mem.archived{border-left-color:var(--muted);opacity:.78}
@@ -45,10 +71,10 @@
   .mem .content{white-space:pre-wrap;word-break:break-word;margin:4px 0}
   .mem .meta{color:var(--muted);font-size:12px;display:flex;gap:12px;flex-wrap:wrap}
   .mem .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-  .tag{background:#20283b;border-radius:5px;padding:1px 7px;font-size:11px;color:#9db4ff;margin-right:4px}
+  .tag{background:var(--tag-bg);border-radius:5px;padding:1px 7px;font-size:11px;color:var(--tag-fg);margin-right:4px}
   .score{font-size:11px;color:var(--warn)}
   .empty{color:var(--muted);text-align:center;padding:40px}
-  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal-bg{position:fixed;inset:0;background:var(--mask);display:none;align-items:center;justify-content:center;z-index:50}
   .modal-bg.show{display:flex}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;width:min(640px,92vw);max-height:86vh;overflow:auto}
   .modal h3{margin:0 0 14px}
@@ -57,15 +83,15 @@
   .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
   .search-type{display:flex;gap:6px;align-items:center}
   .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;background:var(--chip);color:var(--muted)}
-  .pill.protected{color:var(--warn);background:#33291a}
-  .pill.review{color:var(--accent2);background:#16312a}
+  .pill.protected{color:var(--warn);background:var(--pill-protected-bg)}
+  .pill.review{color:var(--accent2);background:var(--pill-review-bg)}
   .detail-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px}
   .detail-grid .k{color:var(--muted)}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);
-    border:1px solid var(--line);padding:10px 18px;border-radius:8px;display:none;z-index:99;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+    border:1px solid var(--line);padding:10px 18px;border-radius:8px;display:none;z-index:99;box-shadow:0 6px 24px var(--shadow)}
   .toast.show{display:block}
-  .toast.err{border-color:var(--danger);color:#ffd2d2}
-  .toast.ok{border-color:var(--ok);color:#cffaec}
+  .toast.err{border-color:var(--danger);color:var(--toast-err-fg)}
+  .toast.ok{border-color:var(--ok);color:var(--toast-ok-fg)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
   th{color:var(--muted);font-weight:500;font-size:12px}
@@ -87,10 +113,17 @@
 <header>
   <h1>🧠 Bionic Agent 管理面板</h1>
   <div class="stats" id="stats"></div>
+  <select id="themeSel" title="配色：选「跟随 DSH」时自动同步软件的明暗与品牌色"
+    style="padding:4px 8px;font-size:12px;border-radius:6px">
+    <option value="dsh">跟随 DSH</option>
+    <option value="dark">深色</option>
+    <option value="light">浅色</option>
+  </select>
 </header>
 
 <div class="tabs">
   <button class="tab active" data-tab="memories">记忆</button>
+  <button class="tab" data-tab="starmap">星图</button>
   <button class="tab" data-tab="tasks">任务</button>
   <button class="tab" data-tab="governance">治理</button>
 </div>
@@ -114,6 +147,32 @@
     <button id="memNew">+ 新建记忆</button>
   </div>
   <div id="memList"></div>
+</div>
+
+<!-- ========== 星图 ========== -->
+<div class="view" id="starmap">
+  <div class="toolbar">
+    <button id="starReload">刷新星图</button>
+    <label style="color:var(--muted)">
+      语义阈值
+      <input id="starThreshold" type="range" min="0.40" max="0.80" step="0.01" value="0.62"
+        style="vertical-align:middle;width:120px" />
+      <span id="starThresholdVal" style="display:inline-block;min-width:34px">0.62</span>
+    </label>
+    <label style="color:var(--muted)"><input type="checkbox" id="starArchived" /> 含归档</label>
+    <span id="starLegend" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div style="position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    background:var(--bg);height:calc(100vh - 230px);min-height:420px">
+    <canvas id="starCanvas" style="display:block;width:100%;height:100%;cursor:grab"></canvas>
+    <div id="starHint" style="position:absolute;left:12px;bottom:10px;font-size:12px;
+      color:var(--muted);pointer-events:none">
+      拖动旋转 · 滚轮缩放 · 点节点看原文
+    </div>
+    <div id="starInfo" style="position:absolute;right:12px;top:12px;max-width:320px;
+      font-size:12px;display:none;background:var(--card);border:1px solid var(--line);
+      border-radius:8px;padding:10px;box-shadow:var(--shadow)"></div>
+  </div>
 </div>
 
 <!-- ========== 任务 ========== -->
@@ -220,6 +279,126 @@ const BASE = (() => {
 })();
 const withBase = u => (u.startsWith('/') ? BASE + u : u);
 
+// ───────────────────────── 主题 ─────────────────────────
+// 三种模式：
+//   dsh   跟随 DSH —— 从同源父窗口读 --dsw-alias-* 令牌，直接套到本页变量上。
+//         同源是前提：面板走 /bionic-panel 反代，与 DSH 同源，所以父窗口的
+//         document 和 getComputedStyle 都读得到；独立打开（8899）时没有父窗口，
+//         自动退回深色。跨源时会抛 SecurityError，同样退回。
+//   dark  内置深色      light  内置浅色
+//
+// 为什么不干脆内嵌一份 DSH 的主题 CSS：那套有 403 个令牌、内含字体与代码高亮，
+// 面板只用得上十来个；更关键的是它随 DSH 版本变，抄一份就会过期。读令牌永远同步。
+const THEME_KEY = 'bionic-theme';
+const THEME_PREFS = ['dsh', 'dark', 'light'];
+// 本页变量 ← DSH 令牌。顺序按「用途」而非名字对应，所以显式列出来。
+const DSH_TOKEN_MAP = {
+  '--bg': '--dsw-alias-bg-base',
+  '--panel': '--dsw-alias-bg-layer-1',
+  '--panel2': '--dsw-alias-bg-layer-2',
+  '--chip': '--dsw-alias-bg-layer-3',
+  '--line': '--dsw-alias-border-l2',
+  '--txt': '--dsw-alias-label-primary',
+  '--muted': '--dsw-alias-label-secondary',
+  '--accent': '--dsw-alias-link',
+  '--accent2': '--dsw-alias-state-success-primary',
+  '--ok': '--dsw-alias-state-success-primary',
+  '--warn': '--dsw-alias-state-warn-primary',
+  '--danger': '--dsw-alias-state-error-primary',
+  '--tag-bg': '--dsw-alias-bg-layer-3',
+  '--tag-fg': '--dsw-alias-link',
+  '--pill-protected-bg': '--dsw-alias-bg-layer-3',
+  '--pill-review-bg': '--dsw-alias-bg-layer-3',
+  '--header1': '--dsw-alias-bg-layer-1',
+  '--header2': '--dsw-alias-bg-layer-1',
+  // 按钮单独一套：DSH 的主按钮是「反色实块」（暗色下近白底黑字），不是品牌蓝。
+  // 直接拿 --accent 当底色会把白字压到 3:1 左右，读不清。
+  '--btn-bg': '--dsw-alias-button-primary-fill',
+  '--btn-fg': '--dsw-alias-label-primary-foreground',
+  '--on-warn': '--dsw-alias-label-primary-foreground'
+};
+
+const themePref = () => {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return THEME_PREFS.includes(v) ? v : 'dsh';
+  } catch { return 'dsh'; }
+};
+
+/** 读同源父窗口的主题令牌；拿不到就返回 null（跨源 / 不在 iframe 里）。 */
+function readDshTheme() {
+  try {
+    if (window.parent === window) return null;          // 独立打开，没有父窗口
+    const doc = window.parent.document;                 // 跨源会在这里抛 SecurityError
+    if (!doc || !doc.body) return null;
+    const cs = window.parent.getComputedStyle(doc.body);
+    const dark = doc.body.hasAttribute('data-ds-dark-theme');
+    const out = {};
+    for (const [mine, theirs] of Object.entries(DSH_TOKEN_MAP)) {
+      const v = String(cs.getPropertyValue(theirs) || '').trim();
+      if (v) out[mine] = v;
+    }
+    // 一个令牌都没读到，说明父页面的主题还没挂上（或不是 DSH 页面），当作不可用
+    return Object.keys(out).length >= 5 ? { dark, vars: out } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 把变量写成根元素的内联样式：内联优先级高于 <style> 里的规则，省掉一套重复选择器。 */
+function paintVars(vars) {
+  const root = document.documentElement;
+  for (const name of Object.keys(DSH_TOKEN_MAP)) root.style.removeProperty(name);
+  for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
+}
+
+let themeWatch = null;
+
+function applyTheme(pref = themePref()) {
+  const root = document.documentElement;
+  // 每次先卸掉上一次「跟随 DSH」留下的内联变量，避免切到内置主题时残留
+  paintVars({});
+  if (themeWatch) { try { themeWatch.disconnect(); } catch {} themeWatch = null; }
+
+  if (pref === 'dsh') {
+    const got = readDshTheme();
+    if (got) {
+      root.dataset.theme = got.dark ? 'dark' : 'light';
+      paintVars(got.vars);
+      // DSH 里切主题时本页要跟着变：监听父页面 body 的属性变化（data-ds-dark-theme）。
+      // 用父窗口自己的 MutationObserver 构造器 —— 跨 realm 的对象不该混用。
+      try {
+        const ParentObserver = window.parent.MutationObserver || MutationObserver;
+        themeWatch = new ParentObserver(() => applyTheme('dsh'));
+        themeWatch.observe(window.parent.document.body, {
+          attributes: true, attributeFilter: ['data-ds-dark-theme', 'class', 'style']
+        });
+      } catch { themeWatch = null; }
+    } else {
+      // 读不到（独立打开/跨源）→ 用深色，但不动用户的选择
+      root.dataset.theme = 'dark';
+    }
+  } else {
+    root.dataset.theme = pref;   // 内置主题：清掉内联变量，交给上面两套 :root 规则
+  }
+  const sel = document.getElementById('themeSel');
+  if (sel && sel.value !== pref) sel.value = pref;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('themeSel');
+  if (sel) {
+    sel.value = themePref();
+    sel.addEventListener('change', () => {
+      try { localStorage.setItem(THEME_KEY, sel.value); } catch {}
+      applyTheme(sel.value);
+    });
+  }
+  applyTheme();
+});
+// 父页面的 body 属性可能在 DOMContentLoaded 之前/之后就绪，补一次
+applyTheme();
+
 // 报到：让后端记一笔"页面真的在浏览器里跑起来了"。
 //
 // 为什么要它：宿主半的 panel-boot.log 只能证明 Node 侧加载了插件；iframe 到底
@@ -257,9 +436,245 @@ $$('.tab').forEach(t=>t.onclick=()=>{
   t.classList.add('active');
   $('#'+t.dataset.tab).classList.add('active');
   if(t.dataset.tab==='memories') loadMemories();
+  if(t.dataset.tab==='starmap') loadStarMap();
   if(t.dataset.tab==='tasks') loadTasks();
   if(t.dataset.tab==='governance') loadGovStatus();
 });
+
+/* ---------- 记忆星图 ---------- *
+ * 为什么手写 Canvas 而不是引 three.js：
+ * 这个面板刻意保持零构建、零 CDN 依赖（拷走就能跑，DSH 里同源加载）。
+ * 几百个点用「透视投影 + 按深度排序」手算完全够用，而且能精确控制
+ * 什么该被画出来。参考视频用的是同为手算 Canvas 的做法。
+ *
+ * 布局（坐标由后端 app/star_map.py 算好，这里只投影）：
+ *   - 类别占不同天区（教训在上、环境在下…），这是人给的语义，一眼能对上；
+ *   - 簇内真正相近的内容彼此靠近，语义边把它们连起来。
+ * 亮度 = freshness 为主 + 年龄折扣，只是「新旧直观感」，不声称是遗忘曲线。
+ */
+const STAR = {
+  data: null,
+  rotX: -0.12, rotY: 0.5,
+  zoom: 1,
+  drag: null,
+  picking: null,
+  raf: 0,
+};
+const STAR_COLORS = {
+  '教训': '#f2836b', '项目': '#6fb3f2', '环境': '#6fe0b8',
+  '授权': '#f2c96f', 'preference': '#c48ef2', 'general': '#9aa7b8',
+};
+const starColor = (cat) => STAR_COLORS[cat] || '#9aa7b8';
+
+async function loadStarMap(){
+  const th = parseFloat($('#starThreshold').value) || 0.62;
+  const inc = $('#starArchived').checked;
+  try{
+    const j = await api(`/api/starmap?threshold=${th}&include_archived=${inc?'true':'false'}`);
+    STAR.data = j.data || {nodes:[],edges:[],meta:{}};
+    const m = STAR.data.meta || {};
+    $('#starLegend').textContent =
+      `${m.node_count||0} 个记忆 · ${m.edge_count||0} 条连线 · ${m.cluster_count||0} 个天区`;
+    renderStarLegend(m);
+    drawStar();
+  }catch(e){
+    toast('星图加载失败：'+e.message, 'error');
+  }
+}
+
+function renderStarLegend(meta){
+  const cats = {};
+  (STAR.data?.nodes||[]).forEach(n=>{ cats[n.category]=(cats[n.category]||0)+1; });
+  const el = $('#starInfo');
+  el.style.display='block';
+  el.innerHTML = '<b>天区</b><br>' + Object.entries(cats)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([c,n])=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+      background:${starColor(c)};margin-right:5px"></span>${esc(c)} <span style="color:var(--muted)">${n}</span>`)
+    .join('<br>');
+}
+
+/**
+ * 把三维节点投影成屏幕坐标，并按实际占位自动缩放。
+ * drawStar 与 pickStar 共用这一份 —— 两边各算一遍必然对不齐。
+ */
+function projectNodes(width, height){
+  const cosY = Math.cos(STAR.rotY), sinY = Math.sin(STAR.rotY);
+  const cosX = Math.cos(STAR.rotX), sinX = Math.sin(STAR.rotX);
+  const nodes = STAR.data?.nodes || [];
+  const units = nodes.map(n => {
+    let x = n.x * cosY - n.z * sinY;
+    let z = n.x * sinY + n.z * cosY;
+    const y = n.y * cosX - z * sinX;
+    z = n.y * sinX + z * cosX;
+    const persp = 3.2 / (3.2 + z);      // 越远越小
+    return { x, y, z, persp };
+  });
+  // 量真实占位再定缩放：留 8% 边距，横纵取更紧的那个，保证不拉扁也不裁切
+  let maxUx = 0.4, maxUy = 0.4;
+  units.forEach(u => {
+    maxUx = Math.max(maxUx, Math.abs(u.x * u.persp));
+    maxUy = Math.max(maxUy, Math.abs(u.y * u.persp));
+  });
+  const fit = Math.min((width * 0.5 * 0.92) / maxUx,
+                       (height * 0.5 * 0.92) / maxUy) * STAR.zoom;
+  const cx = width / 2, cy = height / 2;
+  const pts = new Map();
+  nodes.forEach((n, i) => {
+    const u = units[i];
+    pts.set(n.id, { sx: cx + u.x * u.persp * fit, sy: cy + u.y * u.persp * fit,
+                    depth: u.z, persp: u.persp });
+  });
+  return pts;
+}
+
+function drawStar(){
+  const cv = $('#starCanvas');
+  if(!cv || !STAR.data) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  if(!rect.width || !rect.height) return;
+  if(cv.width !== Math.round(rect.width*dpr) || cv.height !== Math.round(rect.height*dpr)){
+    cv.width = Math.round(rect.width*dpr);
+    cv.height = Math.round(rect.height*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,rect.width,rect.height);
+
+  // 读取当前主题色，画布要跟着明暗走（不能用写死的黑底）
+  const css = getComputedStyle(document.documentElement);
+  const txtColor = css.getPropertyValue('--txt').trim() || '#e8eef7';
+
+  const cx = rect.width/2, cy = rect.height/2;
+  // 投影：先按当前旋转角把三维点转到「单位空间」，再按实际范围自动缩放。
+  // 不用固定比例的原因（实测两次）：固定比例下旋转会让边缘的点跑出画布，
+  // 教训天区 15 个点被底边裁得只剩零星几颗。
+  const pts = projectNodes(rect.width, rect.height);
+
+  // ── 连线：语义边按相似度给透明度，tag 边更淡（只作背景暗示）
+  STAR.data.edges.forEach(e => {
+    const a = pts.get(e.source), b = pts.get(e.target);
+    if(!a || !b) return;
+    const alpha = e.kind === 'link' ? 0.55
+                : e.kind === 'semantic' ? Math.min(0.5, 0.12 + (e.weight-0.5)*1.6)
+                : 0.10;
+    ctx.strokeStyle = withAlpha(txtColor, Math.max(0.06, alpha));
+    ctx.lineWidth = e.kind === 'semantic' ? 0.9 : 0.6;
+    ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+  });
+
+  // ── 节点：按深度从远到近画，远的先画（近的盖住远的）
+  const sorted = [...STAR.data.nodes].sort((p,q)=>(pts.get(q.id).depth) - (pts.get(p.id).depth));
+  sorted.forEach(n => {
+    const p = pts.get(n.id);
+    const r = Math.max(2.2, Math.min(9, 2.4 + Math.log2((n.size||50)/18) * 1.9)) * p.persp;
+    const bright = 0.45 + 0.55 * (n.brightness ?? 0.7);
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, r, 0, Math.PI*2);
+    ctx.fillStyle = withAlpha(starColor(n.category), bright);
+    ctx.fill();
+    if(n.protected){
+      ctx.strokeStyle = withAlpha(txtColor, 0.75); ctx.lineWidth = 1; ctx.stroke();
+    }
+    // 选中/悬停高亮
+    if(STAR.picking === n.id){
+      ctx.strokeStyle = txtColor; ctx.lineWidth = 1.6; ctx.stroke();
+    }
+  });
+}
+
+function withAlpha(color, a){
+  const c = (color||'').trim();
+  const hex = c.replace('#','');
+  if(/^[0-9a-fA-F]{6}$/.test(hex)){
+    const r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  if(/^[0-9a-fA-F]{3}$/.test(hex)){
+    const r = parseInt(hex[0]+hex[0],16), g = parseInt(hex[1]+hex[1],16), b = parseInt(hex[2]+hex[2],16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  return c; // 已经是 rgb()/var 之类，原样返回
+}
+
+function pickStar(ev){
+  const cv = $('#starCanvas');
+  const rect = cv.getBoundingClientRect();
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  // 复用 drawStar 算好的屏幕坐标，保证"看到的位置"和"点得到的位置"一致。
+  // 重新独立算一遍是最容易出错的地方 —— 旋转/缩放参数一多就会对不上。
+  const pts = projectNodes(rect.width, rect.height);
+  let best = null, bestD = 14;
+  (STAR.data?.nodes||[]).forEach(n=>{
+    const p = pts.get(n.id);
+    if(!p) return;
+    const d = Math.hypot(p.sx-mx, p.sy-my);
+    if(d < bestD){ bestD = d; best = n; }
+  });
+  return best;
+}
+
+function showStarInfo(n){
+  const el = $('#starInfo');
+  if(!n){ renderStarLegend(STAR.data?.meta||{}); return; }
+  el.style.display='block';
+  el.innerHTML = `
+    <div style="font-weight:600;margin-bottom:6px">${esc(n.label)}</div>
+    <div style="color:var(--muted);margin-bottom:8px">
+      ${esc(n.category)} · 重要 ${n.importance} · 新鲜 ${n.freshness} · 被用 ${n.access_count} 次
+    </div>
+    <div style="margin-bottom:8px">${esc((n.tags||[]).join(" "))}</div>
+    <button class="ghost" id="starOpenFull" style="font-size:12px">打开完整记忆</button>`;
+  $('#starOpenFull').onclick = () => {
+    $$('.tab').forEach(x=>x.classList.remove('active'));
+    $$('.view').forEach(x=>x.classList.remove('active'));
+    document.querySelector('.tab[data-tab="memories"]').classList.add('active');
+    $('#memories').classList.add('active');
+    loadMemories();
+    const box = document.getElementById('mem_'+n.id);
+    if(box){ box.scrollIntoView({block:'center'}); box.style.outline='2px solid var(--accent)';
+      setTimeout(()=>box.style.outline='', 1600); }
+  };
+}
+
+function bindStarEvents(){
+  const cv = $('#starCanvas');
+  if(!cv) return;
+  cv.addEventListener('mousedown', e => { STAR.drag = {x:e.clientX, y:e.clientY, moved:false}; cv.style.cursor='grabbing'; });
+  window.addEventListener('mousemove', e => {
+    if(!STAR.drag) return;
+    const dx = e.clientX - STAR.drag.x, dy = e.clientY - STAR.drag.y;
+    if(Math.abs(dx)+Math.abs(dy) > 3) STAR.drag.moved = true;
+    STAR.rotY += dx * 0.008;
+    STAR.rotX = Math.max(-1.45, Math.min(1.45, STAR.rotX + dy * 0.008));
+    STAR.drag.x = e.clientX; STAR.drag.y = e.clientY;
+    drawStar();
+  });
+  window.addEventListener('mouseup', e => {
+    if(STAR.drag && !STAR.drag.moved){
+      const n = pickStar(e);
+      STAR.picking = n ? n.id : null;
+      showStarInfo(n);
+      drawStar();
+    }
+    STAR.drag = null; cv.style.cursor='grab';
+  });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    STAR.zoom = Math.max(0.45, Math.min(2.6, STAR.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+    drawStar();
+  }, {passive:false});
+  window.addEventListener('resize', () => drawStar());
+  $('#starReload').onclick = loadStarMap;
+  $('#starThreshold').oninput = () => { $('#starThresholdVal').textContent = $('#starThreshold').value; };
+  $('#starThreshold').onchange = loadStarMap;
+  $('#starArchived').onchange = loadStarMap;
+  // 主题切换后重画（画布颜色取自 CSS 变量）
+  new MutationObserver(()=>drawStar()).observe(document.documentElement,
+    {attributes:true, attributeFilter:['data-theme','style']});
+}
+
 
 /* ---------- 记忆 ---------- */
 async function loadCategories(){
@@ -302,7 +717,7 @@ function memCard(m, showScore=false){
   if(m.protected) flags.push('<span class="pill protected">保护</span>');
   if(m.memory_status==='pending_review') flags.push('<span class="pill review">待审</span>');
   const sc = showScore && m.similarity!=null ? `<span class="score">相似度 ${m.similarity.toFixed(3)}</span>` : '';
-  return `<div class="card mem ${arch?'archived':''}" data-id="${m.id}">
+  return `<div class="card mem ${arch?'archived':''}" data-id="${m.id}" id="mem_${m.id}">
     <div class="top">
       <span class="id">#${m.id}</span>
       <span class="cat">${esc(m.category||'general')}</span>
@@ -547,7 +962,12 @@ $('#govConsol').onclick = async ()=>{
 };
 
 /* ---------- 启动 ---------- */
-(async ()=>{ await loadStats(); await loadCategories(); await loadMemories(); })();
+(async ()=>{
+  bindStarEvents();
+  await loadStats();
+  await loadCategories();
+  await loadMemories();
+})();
 </script>
 </body>
 </html>

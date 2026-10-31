@@ -297,6 +297,33 @@ def api_embedding_status():
     return _ok(core.embedding_status())
 
 
+# ---------------------------------------------------------------------------
+# 记忆星图 (Star map)
+# ---------------------------------------------------------------------------
+@app.get("/api/starmap")
+def api_starmap(limit: int = Query(600, ge=1, le=3000),
+                include_archived: bool = Query(False),
+                threshold: float = Query(0.62, ge=0.0, le=1.0)):
+    """返回 {nodes, edges, meta} 供前端 Canvas 画 3D 星图。
+
+    走 star_map.build_graph —— 纯 Python、无 numpy，拷走就能跑。
+    """
+    from app import star_map  # 延迟导入：没用到星图时不必加载
+
+    try:
+        graph = star_map.build_graph(
+            limit=limit,
+            include_archived=include_archived,
+            semantic_threshold=threshold,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "message": f"{type(exc).__name__}: {exc}"},
+        )
+    return _ok(graph)
+
+
 @app.post("/api/embedding/warmup")
 def api_warmup():
     emb.ensure_warmup(emb.DEFAULT_MODEL)

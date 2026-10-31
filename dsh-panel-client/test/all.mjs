@@ -23,6 +23,18 @@ const STEPS = [
 		optional: false
 	},
 	{
+		name: "面板主题（跟随 DSH / 深色 / 浅色）",
+		script: "test/theme.mjs",
+		// 纯静态读文件，不依赖浏览器与宿主，必须常绿
+		optional: false
+	},
+	{
+		name: "记忆星图（前端渲染 + 后端布局）",
+		script: "test/starmap.mjs",
+		// 前端部分纯静态；后端实测需要 python，没有就算 SKIP
+		optional: false
+	},
+	{
 		name: "宿主半 cordis 端到端",
 		script: "test/host-cordis.mjs",
 		optional: true

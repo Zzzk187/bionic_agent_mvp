@@ -311,7 +311,10 @@ window.__ModuleLoader__.load({
 				// height:100% + min-height:0 + overflow:hidden，自身作为 flex 列。
 				style: {
 					height: "100%", minHeight: 0, overflow: "hidden",
-					border: "none", background: "#fff",
+					border: "none",
+					// 用 DSH 的背景令牌而不是写死 #fff：面板 iframe 加载前会先露出这层底色，
+					// 深色主题下白闪一下很难看。令牌取不到时退回 transparent，由 iframe 自己画。
+					background: "var(--dsw-alias-bg-base, transparent)",
 					display: "flex", flexDirection: "column"
 				},
 				children

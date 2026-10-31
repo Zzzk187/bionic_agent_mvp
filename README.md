@@ -115,6 +115,31 @@ bionic-agent-admin
 > 设计取舍：面板是**独立进程**（FastAPI），不侵入 DeepSeek Harness 的 Electron/asar，
 > 因此宿主更新、热重载都不会影响它。
 
+### 记忆星图（3D）
+
+面板里「星图」这页把整个记忆库画成一个可旋转的三维天球：
+
+- **方位由类别决定**：教训 / 项目 / 环境 / 授权各占一片天区，颜色对应固定。
+- **簇内按语义再聚**：内容真正相近的会互相靠近，并被语义边连起来；标签共享只有最淡的边。
+- **亮度 = 新鲜度**（`freshness` 为主 + 年龄折扣）。这只是「新旧直观感」，
+  代码里明确注明了**不声称这是遗忘曲线**——没有半衰期、没有回弹，别把它当衰减模型读。
+- **点节点**弹出信息卡（类别、重要度、新鲜度、被用次数、标签），可一键跳回记忆列表定位原文。
+- 右上角图例显示各天区记忆数；阈值滑块（0.40–0.80）可调语义连边的松紧。
+
+```bash
+curl "http://127.0.0.1:8899/api/starmap?threshold=0.62"
+# → {ok:true, data:{nodes:[...], edges:[...], meta:{node_count, edge_count, cluster_count, ...}}}
+```
+
+**为什么不引 three.js**：面板刻意保持零构建、零 CDN 依赖（拷走就能跑、DSH 里同源加载）。
+几百个点用「手算透视投影 + 按深度排序」完全够用，还能精确控制画什么。后端布局在
+`app/star_map.py`，纯 Python 无 numpy。
+
+> 布局上的一个实测教训：最初想用纯语义聚类定方位，结果 36 条真实记忆按 0.62 聚出
+> **25 个簇**（几乎一点一簇，一盘散沙），降到 0.46 又塌成 **1 个 35 点巨簇**。
+> 相似度中位数只有 0.319，这本来就是分散数据。所以改成 **类别定方位、语义只管簇内**——
+> 类别是人给的、语义稳定、一眼能对上号。
+
 ### 可选：把面板嵌进 DeepSeek Harness（侧边栏）
 
 仓库自带一个 Cordis client 插件 `dsh-panel-client/`，它只在 DSH 侧边栏加一个
@@ -316,7 +341,9 @@ bionic-agent-mcp/
 | `test/port-conflict.mjs` | 8899 被别的程序占着时换端口，且不误杀别人 |
 | `test/host-webserver.mjs` | 真宿主 WebServer 走 `ctx.inject(["webServer"])` 真实路径 |
 | `test/self-heal.mjs` | 杀掉 python 子进程后自动重拉（boot 标识变化即证） |
-| `verify-install.mjs` | 安装态 19 项：宿主判定链 + 两份痕迹 + 活路由 |
+| `test/theme.mjs` | 主题：三档选项、深浅两套变量齐全、样式不写死颜色、跟随 DSH 读令牌 |
+| `test/starmap.mjs` | 星图：渲染契约（共用投影/自适应/取 CSS 变量）+ 后端布局实测 |
+| `verify-install.mjs` | 安装态 20 项：宿主判定链 + 两份痕迹 + 活路由 |
 
 > `verify-install.mjs` 里两项（`panel-boot.log` / `panel-client.log`）不打勾是正常的：
 > 它们要等你**重启 DSH 并点开一次面板**之后才有证据。刻意写成 `[WAIT]` 而不是猜测通过。
