@@ -49,33 +49,54 @@ check(
 	"星图 tab 存在",
 	/data-tab="starmap"/.test(html) && /id="starmap"/.test(html),
 );
-check("画布元素存在", /id="starCanvas"/.test(html));
+check("3D 渲染容器存在（不再是自己手画 canvas）", /id="starCanvasWrap"/.test(html));
 check(
-	"投影函数 drawStar / pickStar 共用 projectNodes（避免点选对不齐）",
-	/function projectNodes\(/.test(html) &&
-		/drawStar[\s\S]{0,3000}?projectNodes\(/.test(html) &&
-		/pickStar[\s\S]{0,2000}?projectNodes\(/.test(html),
+	"用现成 3D 图库而不是手写投影",
+	/ForceGraph3D\(\)\(host\)/.test(html) && /3d-force-graph/.test(html),
 );
 check(
-	"按实际占位自适应缩放（不再用固定比例，防止旋转后裁切）",
-	/maxUx/.test(html) && /maxUy/.test(html) && /const fit = Math\.min/.test(html),
+	"库文件本地托管（不依赖 CDN，离线可用）",
+	/\/static\/3d-force-graph\.min\.js/.test(html) && !/unpkg\.com|cdn\.jsdelivr/.test(html),
 );
 check(
-	"画布颜色取自 CSS 变量（跟随主题，不写死）",
-	/getPropertyValue\('--txt'\)/.test(html) &&
-		!/ctx\.strokeStyle\s*=\s*['"]#[0-9a-fA-F]{3,8}['"]/.test(html),
-);
-check(
-	"主题切换后重画（MutationObserver 盯 data-theme）",
-	/MutationObserver\([\s\S]{0,80}drawStar/.test(html),
-);
-check(
-	"点节点弹出信息卡并可跳回记忆列表",
-	/id="starInfo"/.test(html) && /starOpenFull/.test(html) && /scrollIntoView/.test(html),
+	"手写投影代码已彻底移除（防止两套渲染并存）",
+	!/function projectNodes\(/.test(html) && !/function drawStar\(/.test(html) && !/function pickStar\(/.test(html),
 );
 check(
 	"天区颜色按 category 分配（不是按数组下标）",
 	/STAR_COLORS\s*=\s*\{/.test(html) && /starColor\(n\.category\)/.test(html),
+);
+check(
+	"节点位置钉死（fx/fy/fz），不让力模拟把天区揉散",
+	/fx:\s*n\.x\s*\*\s*SCALE|fx:\s*raw\[i\]\.x/.test(html) && /fy:/.test(html) && /fz:/.test(html),
+);
+check(
+	"坐标先减质心再摆位（否则相机对原点取景会裁掉边缘节点）",
+	/raw\.reduce\(/.test(html) && /-\s*c\.x/.test(html),
+);
+check(
+	"取景前等两帧（cameraPosition/zoomToFit 是异步生效的）",
+	/settle\s*=\s*\(\)\s*=>\s*new Promise\(r\s*=>\s*requestAnimationFrame/.test(html),
+);
+check(
+	"自适应取景：按屏幕包围盒反推相机距离",
+	/const target = 0\.\d+/.test(html) && /zoomToFit/.test(html),
+);
+check(
+	"3D 场景颜色取自 CSS 变量（跟随主题，不写死）",
+	/getPropertyValue/.test(html) && /bg:\s*get\('--bg'/.test(html) && /backgroundColor\(pal\.bg\)/.test(html),
+);
+check(
+	"主题切换只换颜色不重建（保留用户调好的视角）",
+	/MutationObserver[\s\S]{0,400}?backgroundColor\(pal\.bg\)/.test(html),
+);
+check(
+	"点星弹信息卡并可跳回记忆列表",
+	/id="starInfo"/.test(html) && /starOpenFull/.test(html) && /scrollIntoView/.test(html),
+);
+check(
+	"天区名称以覆盖层标签显示",
+	/star-cat-label/.test(html) && /graph2ScreenCoords/.test(html),
 );
 
 // ── 后端实测 ────────────────────────────────────────────────────────────────

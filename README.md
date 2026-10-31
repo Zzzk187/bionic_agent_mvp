@@ -131,9 +131,26 @@ curl "http://127.0.0.1:8899/api/starmap?threshold=0.62"
 # → {ok:true, data:{nodes:[...], edges:[...], meta:{node_count, edge_count, cluster_count, ...}}}
 ```
 
-**为什么不引 three.js**：面板刻意保持零构建、零 CDN 依赖（拷走就能跑、DSH 里同源加载）。
-几百个点用「手算透视投影 + 按深度排序」完全够用，还能精确控制画什么。后端布局在
-`app/star_map.py`，纯 Python 无 numpy。
+**渲染用的是 [3d-force-graph](https://github.com/vasturiano/3d-force-graph)**（MIT，v1.80.1），
+three.js 已打包在它内部，**文件本地托管**在 `app/static/3d-force-graph.min.js`（1.39 MB），
+不连 CDN —— 面板的前提是「拷走就能跑、离线可用」，DSH 里还是同源 iframe，外链会额外受网络与 CSP 影响。
+
+> 第一版是我自己手写 Canvas 投影（`projectNodes` + 按深度排序），能跑但很丑：
+> 固定比例缩放下旋转会让边缘节点跑出画布、发光做不出来、拖动惯性也没有。
+> 换成现成库之后留下三个**实测踩过的坑**，都在 `test/starmap.mjs` 里钉成断言：
+>
+> 1. **坐标尺度是「丑」的根源**。后端返回 ±1.3 量级的坐标，最初乘 `SCALE=1400` →
+>    天球跨度 3000 单位，节点只有个位数半径，相机被迫退到 5712，星星小到几乎看不见
+>    （着色像素仅 141）。改成 `SCALE=260` 后着色像素 5067（**35.9 倍**）。
+> 2. **`cameraPosition()` / `zoomToFit()` 是异步生效的**。设完立刻读 `graph2ScreenCoords()`
+>    拿到的是上一次相机的投影 —— 实测 `zoomToFit(0,60)` 后立即测包围盒是 582×722，
+>    等两帧后变成 194×279。所以自适应取景必须先 `await` 两帧 `requestAnimationFrame`。
+> 3. **星团质心不在原点**。后端按类别定天区（"教训" y=+1601、"授权" y=-1330），
+>    相机却永远对原点取景 → 必然裁边（曾出现 fillW 49% 却有 5 个节点出画）。
+>    解法是先把坐标减去质心再摆位。
+>
+> 另外**不要把 `fx/fy/fz` 放开让力模拟自由布局**：试过，更糟（fillW 降到 20%），
+> 因为 d3-force-3d 会把深度也铺开把天区揉散。钉死坐标才对。
 
 > 布局上的一个实测教训：最初想用纯语义聚类定方位，结果 36 条真实记忆按 0.62 聚出
 > **25 个簇**（几乎一点一簇，一盘散沙），降到 0.46 又塌成 **1 个 35 点巨簇**。
@@ -342,7 +359,7 @@ bionic-agent-mcp/
 | `test/host-webserver.mjs` | 真宿主 WebServer 走 `ctx.inject(["webServer"])` 真实路径 |
 | `test/self-heal.mjs` | 杀掉 python 子进程后自动重拉（boot 标识变化即证） |
 | `test/theme.mjs` | 主题：三档选项、深浅两套变量齐全、样式不写死颜色、跟随 DSH 读令牌 |
-| `test/starmap.mjs` | 星图：渲染契约（共用投影/自适应/取 CSS 变量）+ 后端布局实测 |
+| `test/starmap.mjs` | 星图：用现成库不手写投影、坐标尺度、异步取景、质心归零、主题只换色 + 后端布局实测 |
 | `verify-install.mjs` | 安装态 20 项：宿主判定链 + 两份痕迹 + 活路由 |
 
 > `verify-install.mjs` 里两项（`panel-boot.log` / `panel-client.log`）不打勾是正常的：

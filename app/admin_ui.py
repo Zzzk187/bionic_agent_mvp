@@ -460,6 +460,27 @@ def index():
     return _err("找不到 admin_ui.html（请确认它和 admin_ui.py 在同一目录）", status=500)
 
 
+# 星图用的 3D 库（3d-force-graph，MIT，自包含 three.js）放在 app/static/ 里
+# 本地托管而不是走 CDN：面板的设计前提是「拷走就能跑、离线可用」，
+# 而 DSH 里是 iframe 同源加载，外链还会额外受网络与 CSP 影响。
+STATIC_DIR = Path(__file__).resolve().with_name("static")
+
+
+@app.get("/static/{name}")
+def static_file(name: str):
+    # 只允许白名单后缀，避免把目录里别的东西读出去（/static/../admin_ui.py）
+    if "/" in name or "\\" in name or ".." in name:
+        return _err("非法文件名", status=400)
+    if not name.endswith((".js", ".css", ".svg")):
+        return _err("不支持的文件类型", status=400)
+    target = STATIC_DIR / name
+    if not target.is_file():
+        return _err(f"找不到 {name}", status=404)
+    media = "text/javascript" if name.endswith(".js") else (
+        "text/css" if name.endswith(".css") else "image/svg+xml")
+    return FileResponse(target, media_type=media)
+
+
 def _run_cli():
     parser = argparse.ArgumentParser(description="Bionic Agent 管理面板")
     parser.add_argument("--host", default="127.0.0.1")

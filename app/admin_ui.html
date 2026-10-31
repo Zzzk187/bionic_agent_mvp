@@ -162,16 +162,15 @@
     <label style="color:var(--muted)"><input type="checkbox" id="starArchived" /> 含归档</label>
     <span id="starLegend" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
-  <div style="position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;
-    background:var(--bg);height:calc(100vh - 230px);min-height:420px">
-    <canvas id="starCanvas" style="display:block;width:100%;height:100%;cursor:grab"></canvas>
+  <div id="starCanvasWrap" style="position:relative;border:1px solid var(--line);border-radius:10px;
+    overflow:hidden;background:var(--bg);height:calc(100vh - 230px);min-height:420px">
     <div id="starHint" style="position:absolute;left:12px;bottom:10px;font-size:12px;
-      color:var(--muted);pointer-events:none">
-      拖动旋转 · 滚轮缩放 · 点节点看原文
+      color:var(--muted);pointer-events:none;z-index:2">
+      拖动旋转 · 滚轮缩放 · 点星看原文
     </div>
     <div id="starInfo" style="position:absolute;right:12px;top:12px;max-width:320px;
       font-size:12px;display:none;background:var(--card);border:1px solid var(--line);
-      border-radius:8px;padding:10px;box-shadow:var(--shadow)"></div>
+      border-radius:8px;padding:10px;box-shadow:var(--shadow);z-index:2"></div>
   </div>
 </div>
 
@@ -442,237 +441,339 @@ $$('.tab').forEach(t=>t.onclick=()=>{
 });
 
 /* ---------- 记忆星图 ---------- *
- * 为什么手写 Canvas 而不是引 three.js：
- * 这个面板刻意保持零构建、零 CDN 依赖（拷走就能跑，DSH 里同源加载）。
- * 几百个点用「透视投影 + 按深度排序」手算完全够用，而且能精确控制
- * 什么该被画出来。参考视频用的是同为手算 Canvas 的做法。
+ * 用 3d-force-graph（MIT，自包含 three.js，本地托管在 /static/）。
+ * 为什么不再手写 Canvas：上一版是手工透视投影，几何没毛病但观感很朴素
+ * ——没有光照、没有景深、连线僵直，看着像散点图而不是星图。这个库带
+ * 真正的 WebGL 渲染、力导向自动布局、辉光粒子，代价是 1.39MB 的本地文件。
  *
- * 布局（坐标由后端 app/star_map.py 算好，这里只投影）：
- *   - 类别占不同天区（教训在上、环境在下…），这是人给的语义，一眼能对上；
- *   - 簇内真正相近的内容彼此靠近，语义边把它们连起来。
- * 亮度 = freshness 为主 + 年龄折扣，只是「新旧直观感」，不声称是遗忘曲线。
+ * 布局仍然由后端 app/star_map.py 决定（按 category 分天区），这里只是
+ * 把后端的 x/y/z 当成初始位置喂进去，不再让力的模拟把天区搅散。
  */
 const STAR = {
   data: null,
-  rotX: -0.12, rotY: 0.5,
-  zoom: 1,
-  drag: null,
-  picking: null,
-  raf: 0,
+  graph: null,
+  libReady: false,
+  libError: '',
 };
-const STAR_COLORS = {
-  '教训': '#f2836b', '项目': '#6fb3f2', '环境': '#6fe0b8',
-  '授权': '#f2c96f', 'preference': '#c48ef2', 'general': '#9aa7b8',
-};
-const starColor = (cat) => STAR_COLORS[cat] || '#9aa7b8';
 
-async function loadStarMap(){
-  const th = parseFloat($('#starThreshold').value) || 0.62;
-  const inc = $('#starArchived').checked;
-  try{
-    const j = await api(`/api/starmap?threshold=${th}&include_archived=${inc?'true':'false'}`);
-    STAR.data = j.data || {nodes:[],edges:[],meta:{}};
-    const m = STAR.data.meta || {};
-    $('#starLegend').textContent =
-      `${m.node_count||0} 个记忆 · ${m.edge_count||0} 条连线 · ${m.cluster_count||0} 个天区`;
-    renderStarLegend(m);
-    drawStar();
-  }catch(e){
-    toast('星图加载失败：'+e.message, 'error');
-  }
+// 类别 → 颜色。深浅两套都选了对比度够的色相，同一类别永远同一颜色。
+const STAR_COLORS = {
+  '教训': '#ff7a5c', '项目': '#5aa9ff', '环境': '#3ee0a8',
+  '授权': '#ffc75c', 'preference': '#c589ff', 'general': '#94a3b8',
+};
+const starColor = (cat) => STAR_COLORS[cat] || STAR_COLORS.general;
+
+function loadStarLib(){
+  if (STAR.libReady) return Promise.resolve(true);
+  if (window.ForceGraph3D) { STAR.libReady = true; return Promise.resolve(true); }
+  return new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = '/static/3d-force-graph.min.js';
+    s.onload = () => {
+      STAR.libReady = typeof window.ForceGraph3D === 'function';
+      if (!STAR.libReady) STAR.libError = '文库加载后仍找不到 ForceGraph3D';
+      resolve(STAR.libReady);
+    };
+    s.onerror = () => { STAR.libError = '3d-force-graph 加载失败（/static/3d-force-graph.min.js）'; resolve(false); };
+    document.head.appendChild(s);
+  });
 }
 
-function renderStarLegend(meta){
-  const cats = {};
-  (STAR.data?.nodes||[]).forEach(n=>{ cats[n.category]=(cats[n.category]||0)+1; });
+async function loadStarMap(){
+  const ok = await loadStarLib();
+  if (!ok) {
+    toast(STAR.libError || '3D 库没加载起来', 'err');
+    $('#starLegend').textContent = STAR.libError;
+    return false;
+  }
+  const th = parseFloat($('#starThreshold').value) || 0.62;
+  const inc = $('#starArchived').checked;
+  let j;
+  try {
+    j = await api(`/api/starmap?threshold=${th}&include_archived=${inc?'true':'false'}`);
+  } catch (e) { toast('星图加载失败：' + e.message, 'err'); return false; }
+  if (!j.ok) { toast(j.message || '星图加载失败', 'err'); return false; }
+
+  STAR.data = j.data || { nodes: [], links: [], edges: [] };
+  const m = STAR.data.meta || {};
+  $('#starLegend').textContent =
+    `${m.node_count||0} 个记忆 · ${m.edge_count||0} 条连线 · ${m.cluster_count||0} 个天区`;
+  renderStarLegend();
+  buildStarGraph();
+  return true;
+}
+
+function renderStarLegend(){
   const el = $('#starInfo');
-  el.style.display='block';
+  if (!el) return;
+  const cats = {};
+  (STAR.data?.nodes || []).forEach(n => { cats[n.category] = (cats[n.category] || 0) + 1; });
+  el.style.display = 'block';
   el.innerHTML = '<b>天区</b><br>' + Object.entries(cats)
-    .sort((a,b)=>b[1]-a[1])
-    .map(([c,n])=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;
-      background:${starColor(c)};margin-right:5px"></span>${esc(c)} <span style="color:var(--muted)">${n}</span>`)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, n]) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+      background:${starColor(c)};margin-right:5px;box-shadow:0 0 6px ${starColor(c)}"></span>
+      ${esc(c)} <span style="color:var(--muted)">${n}</span>`)
     .join('<br>');
 }
 
-/**
- * 把三维节点投影成屏幕坐标，并按实际占位自动缩放。
- * drawStar 与 pickStar 共用这一份 —— 两边各算一遍必然对不齐。
- */
-function projectNodes(width, height){
-  const cosY = Math.cos(STAR.rotY), sinY = Math.sin(STAR.rotY);
-  const cosX = Math.cos(STAR.rotX), sinX = Math.sin(STAR.rotX);
-  const nodes = STAR.data?.nodes || [];
-  const units = nodes.map(n => {
-    let x = n.x * cosY - n.z * sinY;
-    let z = n.x * sinY + n.z * cosY;
-    const y = n.y * cosX - z * sinX;
-    z = n.y * sinX + z * cosX;
-    const persp = 3.2 / (3.2 + z);      // 越远越小
-    return { x, y, z, persp };
-  });
-  // 量真实占位再定缩放：留 8% 边距，横纵取更紧的那个，保证不拉扁也不裁切
-  let maxUx = 0.4, maxUy = 0.4;
-  units.forEach(u => {
-    maxUx = Math.max(maxUx, Math.abs(u.x * u.persp));
-    maxUy = Math.max(maxUy, Math.abs(u.y * u.persp));
-  });
-  const fit = Math.min((width * 0.5 * 0.92) / maxUx,
-                       (height * 0.5 * 0.92) / maxUy) * STAR.zoom;
-  const cx = width / 2, cy = height / 2;
-  const pts = new Map();
-  nodes.forEach((n, i) => {
-    const u = units[i];
-    pts.set(n.id, { sx: cx + u.x * u.persp * fit, sy: cy + u.y * u.persp * fit,
-                    depth: u.z, persp: u.persp });
-  });
-  return pts;
+/** 读 CSS 变量，让 3D 场景跟着面板主题走 */
+function starPalette(){
+  const css = getComputedStyle(document.documentElement);
+  const get = (k, d) => (css.getPropertyValue(k) || '').trim() || d;
+  const dark = (document.documentElement.dataset.theme || 'dark') !== 'light';
+  return {
+    dark,
+    bg: get('--bg', dark ? '#0e1116' : '#ffffff'),
+    txt: get('--txt', dark ? '#e6e9ef' : '#1a1d24'),
+    muted: get('--muted', '#8d9bad'),
+  };
 }
 
-function drawStar(){
-  const cv = $('#starCanvas');
-  if(!cv || !STAR.data) return;
-  const dpr = window.devicePixelRatio || 1;
-  const rect = cv.getBoundingClientRect();
-  if(!rect.width || !rect.height) return;
-  if(cv.width !== Math.round(rect.width*dpr) || cv.height !== Math.round(rect.height*dpr)){
-    cv.width = Math.round(rect.width*dpr);
-    cv.height = Math.round(rect.height*dpr);
+function buildStarGraph(){
+  const host = $('#starCanvasWrap');
+  if (!host || !STAR.data) return;
+  const pal = starPalette();
+  const rect = host.getBoundingClientRect();
+  const W = Math.max(320, Math.round(rect.width));
+  const H = Math.max(280, Math.round(rect.height));
+
+  /* 坐标尺度是个真坑：后端给的 x/y/z 在 ±1.3 量级，直接乘 1400 会让
+   * 天球跨度到 3000 单位，而节点半径只有个位数 —— 相机退到 5712 之外，
+   * 整屏只有 141 个着色像素，看着就是几粒灰尘。
+   * 缩放系数改小到 260，配合固定的相机距离，节点才是"星"而不是"尘"。*/
+  const SCALE = 260;
+  /* 必须先减去质心再摆位。后端按类别定天区，各路天区是不对称的
+   * （实测"教训"天区 y=+1601、"授权"在 y=-1330），整体质心并不在原点。
+   * 相机永远对着原点取景 —— 不居中就会出现"明明只占了 49% 宽，却有 5 个
+   * 节点被裁到画外"这种自相矛盾的现象。 */
+  const raw = STAR.data.nodes.map(n => ({ x: n.x * SCALE, y: n.y * SCALE, z: n.z * SCALE }));
+  const c = raw.reduce((a, r) => ({ x: a.x + r.x / raw.length, y: a.y + r.y / raw.length, z: a.z + r.z / raw.length }), { x: 0, y: 0, z: 0 });
+  const nodes = STAR.data.nodes.map((n, i) => ({
+    id: n.id, ...n,
+    x: raw[i].x - c.x, y: raw[i].y - c.y, z: raw[i].z - c.z,
+    fx: raw[i].x - c.x, fy: raw[i].y - c.y, fz: raw[i].z - c.z,   // 钉死，不让力模拟揉散天区
+  }));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const links = (STAR.data.edges || [])
+    .filter(e => byId.has(e.source) && byId.has(e.target))
+    .map(e => ({ source: e.source, target: e.target, kind: e.kind, weight: e.weight ?? 0.5 }));
+
+  if (STAR.graph) { try { host.innerHTML = ''; } catch {} STAR.graph = null; }
+
+  const catOf = (v) => {
+    const id = (v && typeof v === 'object') ? v.id : v;
+    return byId.get(id)?.category;
+  };
+
+  const G = ForceGraph3D()(host)
+    .width(W).height(H)
+    .backgroundColor(pal.bg)
+    .showNavInfo(false)
+    .nodeRelSize(9)
+    .nodeVal(n => 2.4 + Math.log2(Math.max(20, n.size || 60) / 20) * 1.6)
+    .nodeColor(n => starColor(n.category))
+    .nodeOpacity(0.95)
+    .nodeResolution(16)
+    .nodeLabel(n => `<div style="font-size:12px;max-width:280px;line-height:1.5">${esc(n.label)}</div>`)
+    .linkColor(l => l.kind === 'semantic'
+      ? withAlpha(starColor(catOf(l.source)), 0.30)
+      : withAlpha(pal.muted, l.kind === 'tag' ? 0.10 : 0.38))
+    .linkWidth(l => l.kind === 'semantic' ? 1.2 : l.kind === 'link' ? 2.0 : 0.5)
+    .linkOpacity(0.8)
+    .linkDirectionalParticles(l => (l.kind === 'semantic' && l.weight > 0.65) ? 2 : 0)
+    .linkDirectionalParticleWidth(1.8)
+    .linkDirectionalParticleSpeed(0.004)
+    .linkDirectionalParticleColor(l => starColor(catOf(l.source)))
+    .onNodeClick(n => showStarInfo(n));
+
+  // 类别名挂在各天区质心上，省得用户对着颜色猜
+  G.nodeThreeObject(() => null);
+
+  G.graphData({ nodes, links });
+  STAR.graph = G;
+  paintStarLabels(G, nodes);
+
+  setTimeout(() => { try { frameStar(G, nodes); } catch (e) { console.warn('取景失败', e); } }, 400);
+  return G;
+}
+
+/** 自适应取景。
+ * zoomToFit 只保证"看得见"，实测只填满画布 16.8%（横向），星团缩在中间一小块，
+ * 看着就小气。这里改成：扫一圈相机方位找屏幕包围盒最大的方向，再按"投影尺寸与
+ * 相机距离近似成反比"反推距离，把内容撑到画布的 ~86%。一次迭代即可收敛。*/
+async function frameStar(G, nodes){
+  const host = $('#starCanvasWrap');
+  if (!host || !nodes.length) return;
+  const W = host.clientWidth || 800, H = host.clientHeight || 500;
+  /* 踩过的坑，别再改回去：cameraPosition()/zoomToFit() 都是**异步生效**的，
+   * 设完立刻调 graph2ScreenCoords() 读到的是上一次相机的投影 —— 实测
+   * zoomToFit 后立即测 bbox 得 582x722，等两帧后变成 194x279。
+   * 所以每次动相机后面都必须 settle() 再量，否则算出来的距离完全是错的
+   * （上一版就这么把相机推到了 1545，画面只剩中间一小坨）。*/
+  const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const bbox = () => {
+    const pts = nodes.map(n => G.graph2ScreenCoords(n.x, n.y, n.z));
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    return { w, h, score: Math.min(w / W, h / H), clipped: w / W > 0.98 || h / H > 0.98 };
+  };
+  const setCam = (az, el, r) => {
+    const a = az * Math.PI / 180, e = el * Math.PI / 180;
+    G.cameraPosition({ x: r * Math.cos(e) * Math.sin(a), y: r * Math.sin(e), z: r * Math.cos(e) * Math.cos(a) }, undefined, 0);
+  };
+
+  // 基准距离：先用 zoomToFit 找一个"全都能看见"的距离，再围绕它做方位扫描
+  try { G.zoomToFit(0, 60); } catch {}
+  await settle();
+  const cam = G.cameraPosition();
+  const R0 = Math.hypot(cam.x || 0, cam.y || 0, cam.z || 1) || 800;
+
+  // 方位扫描：一圈 8 个方位 × 4 个仰角。挑"两个方向都尽量满且不裁边"的。
+  let best = { az: 0, el: 0, score: -1 };
+  for (let az = 0; az < 360; az += 45) {
+    for (const el of [-20, 0, 20, 40]) {
+      setCam(az, el, R0);
+      await settle();
+      const b = bbox();
+      const sc = b.clipped ? b.score * 0.25 : b.score;
+      if (sc > best.score) best = { az, el, score: sc };
+    }
   }
-  const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.clearRect(0,0,rect.width,rect.height);
 
-  // 读取当前主题色，画布要跟着明暗走（不能用写死的黑底）
-  const css = getComputedStyle(document.documentElement);
-  const txtColor = css.getPropertyValue('--txt').trim() || '#e8eef7';
+  // 在这个方位上反推距离：投影尺寸与相机距离近似成反比。
+  // 迭代两轮足够 —— 因为近似不是严格反比（透视投影），一轮会差一点。
+  setCam(best.az, best.el, R0);
+  await settle();
+  let R = R0;
+  const target = 0.70;   // 实测 0.80 仍有 1 个边缘节点出画（节点半径约 18px），0.70 稳定不裁
+  for (let i = 0; i < 2; i++) {
+    const b = bbox();
+    const cur = Math.max(b.w / W, b.h / H) || 0.3;
+    R = Math.max(120, R * (cur / target));
+    setCam(best.az, best.el, R);
+    await settle();
+  }
+  // 收尾：如果还是偏空（横竖比例悬殊导致按 max 收敛后另一边很小），
+  // 就把距离再收紧一点，宁可略裁边也不要一小坨浮在中间。
+  const fin = bbox();
+  if (Math.max(fin.w / W, fin.h / H) < 0.55) {
+    setCam(best.az, best.el, R * 0.75);
+    await settle();
+  }
+}
 
-  const cx = rect.width/2, cy = rect.height/2;
-  // 投影：先按当前旋转角把三维点转到「单位空间」，再按实际范围自动缩放。
-  // 不用固定比例的原因（实测两次）：固定比例下旋转会让边缘的点跑出画布，
-  // 教训天区 15 个点被底边裁得只剩零星几颗。
-  const pts = projectNodes(rect.width, rect.height);
-
-  // ── 连线：语义边按相似度给透明度，tag 边更淡（只作背景暗示）
-  STAR.data.edges.forEach(e => {
-    const a = pts.get(e.source), b = pts.get(e.target);
-    if(!a || !b) return;
-    const alpha = e.kind === 'link' ? 0.55
-                : e.kind === 'semantic' ? Math.min(0.5, 0.12 + (e.weight-0.5)*1.6)
-                : 0.10;
-    ctx.strokeStyle = withAlpha(txtColor, Math.max(0.06, alpha));
-    ctx.lineWidth = e.kind === 'semantic' ? 0.9 : 0.6;
-    ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+/** 用 CSS 覆盖层画天区标签：比在 3D 里塞 Sprite 简单，字号也清晰 */
+function paintStarLabels(G, nodes){
+  const host = $('#starCanvasWrap');
+  if (!host) return;
+  host.querySelectorAll('.star-cat-label').forEach(e => e.remove());
+  const groups = {};
+  nodes.forEach(n => { (groups[n.category] = groups[n.category] || []).push(n); });
+  Object.entries(groups).forEach(([cat, arr]) => {
+    const c = arr.reduce((a, n) => ({ x: a.x + n.x / arr.length, y: a.y + n.y / arr.length, z: a.z + n.z / arr.length }), { x:0, y:0, z:0 });
+    const el = document.createElement('div');
+    el.className = 'star-cat-label';
+    el.textContent = cat;
+    el.style.cssText = `position:absolute;transform:translate(-50%,-50%);pointer-events:none;
+      font-size:12px;font-weight:600;letter-spacing:.08em;color:${starColor(cat)};
+      text-shadow:0 0 8px ${withAlpha(starColor(cat), .85)}, 0 0 2px #000;opacity:.9;z-index:1`;
+    host.appendChild(el);
+    STAR.labels = STAR.labels || [];
+    STAR.labels.push({ el, pos: c });
   });
-
-  // ── 节点：按深度从远到近画，远的先画（近的盖住远的）
-  const sorted = [...STAR.data.nodes].sort((p,q)=>(pts.get(q.id).depth) - (pts.get(p.id).depth));
-  sorted.forEach(n => {
-    const p = pts.get(n.id);
-    const r = Math.max(2.2, Math.min(9, 2.4 + Math.log2((n.size||50)/18) * 1.9)) * p.persp;
-    const bright = 0.45 + 0.55 * (n.brightness ?? 0.7);
-    ctx.beginPath();
-    ctx.arc(p.sx, p.sy, r, 0, Math.PI*2);
-    ctx.fillStyle = withAlpha(starColor(n.category), bright);
-    ctx.fill();
-    if(n.protected){
-      ctx.strokeStyle = withAlpha(txtColor, 0.75); ctx.lineWidth = 1; ctx.stroke();
-    }
-    // 选中/悬停高亮
-    if(STAR.picking === n.id){
-      ctx.strokeStyle = txtColor; ctx.lineWidth = 1.6; ctx.stroke();
-    }
-  });
+  const sync = () => {
+    if (!STAR.graph || !STAR.labels) return;
+    const g = STAR.graph;
+    STAR.labels.forEach(({ el, pos }) => {
+      try {
+        const p = g.graph2ScreenCoords(pos.x, pos.y, pos.z);
+        const w = host.clientWidth, h = host.clientHeight;
+        const visible = p.x > -60 && p.x < w + 60 && p.y > -30 && p.y < h + 30;
+        el.style.display = visible ? 'block' : 'none';
+        el.style.left = p.x + 'px';
+        el.style.top = p.y + 'px';
+      } catch {}
+    });
+    requestAnimationFrame(sync);
+  };
+  if (!STAR.labelLoop) { STAR.labelLoop = true; requestAnimationFrame(sync); }
 }
 
 function withAlpha(color, a){
-  const c = (color||'').trim();
-  const hex = c.replace('#','');
-  if(/^[0-9a-fA-F]{6}$/.test(hex)){
-    const r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+  const c = (color || '').trim();
+  const hex = c.replace('#', '');
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
     return `rgba(${r},${g},${b},${a})`;
   }
-  if(/^[0-9a-fA-F]{3}$/.test(hex)){
-    const r = parseInt(hex[0]+hex[0],16), g = parseInt(hex[1]+hex[1],16), b = parseInt(hex[2]+hex[2],16);
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    const r = parseInt(hex[0] + hex[0], 16), g = parseInt(hex[1] + hex[1], 16), b = parseInt(hex[2] + hex[2], 16);
     return `rgba(${r},${g},${b},${a})`;
   }
-  return c; // 已经是 rgb()/var 之类，原样返回
+  return c;
 }
 
-function pickStar(ev){
-  const cv = $('#starCanvas');
-  const rect = cv.getBoundingClientRect();
-  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-  // 复用 drawStar 算好的屏幕坐标，保证"看到的位置"和"点得到的位置"一致。
-  // 重新独立算一遍是最容易出错的地方 —— 旋转/缩放参数一多就会对不上。
-  const pts = projectNodes(rect.width, rect.height);
-  let best = null, bestD = 14;
-  (STAR.data?.nodes||[]).forEach(n=>{
-    const p = pts.get(n.id);
-    if(!p) return;
-    const d = Math.hypot(p.sx-mx, p.sy-my);
-    if(d < bestD){ bestD = d; best = n; }
-  });
-  return best;
+/** 从连线端点取类别色（主题切换时用；byId 是 buildStarGraph 内部的，这里走节点对象） */
+function catOfLink(l){
+  const pick = (v) => (v && typeof v === 'object') ? v.category : undefined;
+  return pick(l.source) || pick(l.target);
 }
 
 function showStarInfo(n){
   const el = $('#starInfo');
-  if(!n){ renderStarLegend(STAR.data?.meta||{}); return; }
-  el.style.display='block';
+  if (!el) return;
+  if (!n) { renderStarLegend(); return; }
+  el.style.display = 'block';
   el.innerHTML = `
     <div style="font-weight:600;margin-bottom:6px">${esc(n.label)}</div>
     <div style="color:var(--muted);margin-bottom:8px">
       ${esc(n.category)} · 重要 ${n.importance} · 新鲜 ${n.freshness} · 被用 ${n.access_count} 次
     </div>
-    <div style="margin-bottom:8px">${esc((n.tags||[]).join(" "))}</div>
+    <div style="margin-bottom:8px">${esc((n.tags || []).join(' '))}</div>
     <button class="ghost" id="starOpenFull" style="font-size:12px">打开完整记忆</button>`;
   $('#starOpenFull').onclick = () => {
-    $$('.tab').forEach(x=>x.classList.remove('active'));
-    $$('.view').forEach(x=>x.classList.remove('active'));
+    $$('.tab').forEach(x => x.classList.remove('active'));
+    $$('.view').forEach(x => x.classList.remove('active'));
     document.querySelector('.tab[data-tab="memories"]').classList.add('active');
     $('#memories').classList.add('active');
     loadMemories();
-    const box = document.getElementById('mem_'+n.id);
-    if(box){ box.scrollIntoView({block:'center'}); box.style.outline='2px solid var(--accent)';
-      setTimeout(()=>box.style.outline='', 1600); }
+    const box = document.getElementById('mem_' + n.id);
+    if (box) {
+      box.scrollIntoView({ block: 'center' });
+      box.style.outline = '2px solid var(--accent)';
+      setTimeout(() => box.style.outline = '', 1600);
+    }
   };
 }
 
 function bindStarEvents(){
-  const cv = $('#starCanvas');
-  if(!cv) return;
-  cv.addEventListener('mousedown', e => { STAR.drag = {x:e.clientX, y:e.clientY, moved:false}; cv.style.cursor='grabbing'; });
-  window.addEventListener('mousemove', e => {
-    if(!STAR.drag) return;
-    const dx = e.clientX - STAR.drag.x, dy = e.clientY - STAR.drag.y;
-    if(Math.abs(dx)+Math.abs(dy) > 3) STAR.drag.moved = true;
-    STAR.rotY += dx * 0.008;
-    STAR.rotX = Math.max(-1.45, Math.min(1.45, STAR.rotX + dy * 0.008));
-    STAR.drag.x = e.clientX; STAR.drag.y = e.clientY;
-    drawStar();
-  });
-  window.addEventListener('mouseup', e => {
-    if(STAR.drag && !STAR.drag.moved){
-      const n = pickStar(e);
-      STAR.picking = n ? n.id : null;
-      showStarInfo(n);
-      drawStar();
-    }
-    STAR.drag = null; cv.style.cursor='grab';
-  });
-  cv.addEventListener('wheel', e => {
-    e.preventDefault();
-    STAR.zoom = Math.max(0.45, Math.min(2.6, STAR.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
-    drawStar();
-  }, {passive:false});
-  window.addEventListener('resize', () => drawStar());
-  $('#starReload').onclick = loadStarMap;
+  $('#starReload').onclick = () => {
+    if (STAR.graph) buildStarGraph(); else loadStarMap();
+  };
   $('#starThreshold').oninput = () => { $('#starThresholdVal').textContent = $('#starThreshold').value; };
   $('#starThreshold').onchange = loadStarMap;
   $('#starArchived').onchange = loadStarMap;
-  // 主题切换后重画（画布颜色取自 CSS 变量）
-  new MutationObserver(()=>drawStar()).observe(document.documentElement,
-    {attributes:true, attributeFilter:['data-theme','style']});
+  // 主题切换后重建场景（WebGL 背景色与连线色都取自 CSS 变量）
+  new MutationObserver(() => {
+    if (!STAR.graph || !document.getElementById('starmap')?.classList.contains('active')) return;
+    // 只换颜色，不重建 —— 重建会把用户调好的视角重置掉
+    const pal = starPalette();
+    try {
+      STAR.graph.backgroundColor(pal.bg);
+      STAR.graph.linkColor(l => l.kind === 'semantic'
+        ? withAlpha(starColor(catOfLink(l)), 0.30)
+        : withAlpha(pal.muted, l.kind === 'tag' ? 0.10 : 0.38));
+    } catch {}
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
+  window.addEventListener('resize', () => {
+    if (!STAR.graph || !document.getElementById('starmap')?.classList.contains('active')) return;
+    const host = $('#starCanvasWrap');
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    try { STAR.graph.width(Math.max(320, r.width)).height(Math.max(280, r.height)); } catch {}
+  });
 }
 
 
